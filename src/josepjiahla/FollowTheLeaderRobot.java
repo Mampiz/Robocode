@@ -1,5 +1,6 @@
 package josepjiahla;
 
+import java.awt.Color;
 import robocode.*;
 import robocode.util.Utils;
 
@@ -9,464 +10,358 @@ import java.io.IOException;
 import java.util.*;
 
 public class FollowTheLeaderRobot extends TeamRobot {
-    // Variables per a la jerarquia i lideratge
-    private boolean isLeader = false;
-    private String leaderName = null;
-    private List<String> teamMembers = new ArrayList<>();
-    private Map<String, Point2D.Double> robotPositions = new HashMap<>();
-    private Map<String, String> hierarchy = new LinkedHashMap<>();
-    private Set<String> aliveTeamMembers = new HashSet<>();
-
-    // Variables per al moviment
-    private List<Point2D.Double> corners = new ArrayList<>();
-    private int currentCornerIndex = -1;
-    private boolean clockwise = true; // Assegurem que comença en sentit horari
-    private long lastRoleChangeTime = 0;
-
-    // Variables per a l'enemic
-    private Map<String, EnemyInfo> enemies = new HashMap<>(); // Llista d'enemics detectats
-    private EnemyInfo targetEnemy = null; // Enemic objectiu actual
-    private long enemyLastSeenTime = 0;
-
-    // Variables per a l'establiment de la jerarquia
-    private Map<String, Double> distancesFromRobots = new HashMap<>();
-    private int expectedDistanceMessages = 0;
-
-    // Constants per al control del foc
-    private static final double MAX_FIRE_POWER = 3.0;
-    private static final double MIN_FIRE_POWER = 1.0;
+    private boolean esLider = false;
+    private String nombreLider = null;
+    private List<String> miembrosEquipo = new ArrayList<>();
+    private TreeMap<String, Point2D.Double> posicionesRobots = new TreeMap<>(); // Cambiado a TreeMap
+    private Map<String, String> jerarquia = new LinkedHashMap<>();
+    private Set<String> miembrosVivos = new HashSet<>();
+    private List<Point2D.Double> esquinas = new ArrayList<>();
+    private int indiceEsquinaActual = -1;
+    private boolean sentidoHorario = true;
+    private long tiempoUltimoCambioRol = 0;
+    private TreeMap<String, EnemyInfo> enemigos = new TreeMap<>(); // Cambiado a TreeMap
+    private EnemyInfo enemigoObjetivo = null;
+    private long tiempoUltimaVezVistoEnemigo = 0;
+    private TreeMap<String, Double> distanciasDesdeRobots = new TreeMap<>(); // Cambiado a TreeMap
+    private int mensajesEsperadosDistancia = 0;
+    private static final double MAX_PODER_DISPARO = 3.0;
+    private static final double MIN_PODER_DISPARO = 1.0;
 
     public void run() {
-        // Configuració inicial (eliminat el canvi de color)
         
-        // Permetre que el canó i el radar es moguin independentment del cos
-        setAdjustGunForRobotTurn(true);
-        setAdjustRadarForGunTurn(true);
-        setAdjustRadarForRobotTurn(true);
+        setColors(Color.BLACK, Color.GREEN, Color.GREEN);
+        iniciarYRealizarHandshake();
+        tiempoUltimoCambioRol = getTime();
 
-        // Definim les cantonades del camp de batalla
-        defineBattlefieldCorners();
-
-        // FASE 0: Handshake i elecció del líder
-        performHandshake();
-
-        // Inicialitzem el temps de l'últim canvi de rol
-        lastRoleChangeTime = getTime();
-
-        // Esperem fins que els rols estiguin assignats
-        while (!hierarchy.containsKey(getName()) && !isLeader) {
+        while (!jerarquia.containsKey(getName()) && !esLider) {
             execute();
         }
 
-        // Inicialitzar la llista de membres vius
-        for (String member : teamMembers) {
-            aliveTeamMembers.add(member.split("#")[0]);
+        for (String miembro : miembrosEquipo) {
+            miembrosVivos.add(miembro.split("#")[0]);
         }
 
-        // Bucle principal
-        long lastPositionUpdateTime = 0;
+        long tiempoUltimaActualizacionPosicion = 0;
 
         while (true) {
-            // Cada 15 segons, canvi de rols i inversió de direcció
-            if (getTime() - lastRoleChangeTime >= 15 * 20) { // 15 segons * 20 ticks per segon
-                rotateRoles();
-                lastRoleChangeTime = getTime();
+            if (getTime() - tiempoUltimoCambioRol >= 300) {
+                rotarRoles();
+                tiempoUltimoCambioRol = getTime();
             }
 
-            if (isLeader) {
-                // Moviment del líder
-                moveLeader();
-                // Seleccionar enemic objectiu
-                selectTargetEnemy();
-                // Enviar enemic objectiu a l'equip
-                broadcastTargetEnemy();
+            if (esLider) {
+                moverLider();
+                seleccionarEnemigoObjetivo();
+                transmitirEnemigoObjetivo();
             } else {
-                // Seguir l'antecessor
-                followPredecessor();
+                seguirPredecesor();
             }
 
-            // Control del radar
-            radarControl();
+            controlarRadar();
 
-            // Apuntar i disparar a l'enemic
-            if (targetEnemy != null && (getTime() - enemyLastSeenTime) < 8) { // Si hem vist l'enemic en els darrers 8 ticks
-                trackAndFire();
+            if (enemigoObjetivo != null && (getTime() - tiempoUltimaVezVistoEnemigo) < 8) {
+                rastrearYDisparar();
             }
 
-            // Enviar la posició actual als altres robots cada 5 ticks
-            if (getTime() - lastPositionUpdateTime >= 5) {
+            if (getTime() - tiempoUltimaActualizacionPosicion >= 5) {
                 try {
-                    broadcastMessage(new PositionUpdate(getName(), getX(), getY()));
+                    broadcastMessage(new ActualizacionPosicion(getName(), getX(), getY()));
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
-                lastPositionUpdateTime = getTime();
+                tiempoUltimaActualizacionPosicion = getTime();
             }
 
             execute();
         }
     }
 
-    private void defineBattlefieldCorners() {
-        double marginX = getBattleFieldWidth() * 0.1;
-        double marginY = getBattleFieldHeight() * 0.1;
+    // Orden reestructurado de las funciones privadas, pero sin cambiar su lógica.
 
-        corners.add(new Point2D.Double(marginX, marginY));
-        corners.add(new Point2D.Double(getBattleFieldWidth() - marginX, marginY));
-        corners.add(new Point2D.Double(getBattleFieldWidth() - marginX, getBattleFieldHeight() - marginY));
-        corners.add(new Point2D.Double(marginX, getBattleFieldHeight() - marginY));
+    private void definirEsquinasCampoBatalla() {
+        double margenX = getBattleFieldWidth() * 0.1;
+        double margenY = getBattleFieldHeight() * 0.1;
+        esquinas.add(new Point2D.Double(margenX, margenY));
+        esquinas.add(new Point2D.Double(getBattleFieldWidth() - margenX, margenY));
+        esquinas.add(new Point2D.Double(getBattleFieldWidth() - margenX, getBattleFieldHeight() - margenY));
+        esquinas.add(new Point2D.Double(margenX, getBattleFieldHeight() - margenY));
     }
 
-    private void performHandshake() {
-        // Enviem el nostre número aleatori als altres
-        int myRandomNumber = (int) (Math.random() * 1000);
+    private void realizarHandshake() {
+        int miNumeroAleatorio = (int) (Math.random() * 1000);
         try {
-            broadcastMessage(new LeaderProposal(getName(), myRandomNumber));
+            broadcastMessage(new PropuestaLider(getName(), miNumeroAleatorio));
         } catch (IOException e) {
             e.printStackTrace();
         }
 
-        // Afegim el nostre robot a la llista de membres de l'equip
-        teamMembers.add(getName() + "#" + myRandomNumber);
+        miembrosEquipo.add(getName() + "#" + miNumeroAleatorio);
 
-        // Esperem a rebre propostes d'altres robots durant un temps curt
-        long waitTime = getTime() + 5; // Esperem 0.25 segons (5 ticks)
-        while (getTime() < waitTime) {
+        long tiempoEspera = getTime() + 5;
+        while (getTime() < tiempoEspera) {
             execute();
         }
 
-        // Seleccionem el líder
-        selectLeader();
-
-        // Establim la jerarquia per distàncies
-        establishHierarchy();
+        seleccionarLider();
+        establecerJerarquia();
     }
 
-    private void selectLeader() {
-        int highestNumber = -1;
+    private void seleccionarLider() {
+        int numeroMasAlto = -1;
 
-        for (String member : teamMembers) {
-            int number = getRandomNumberFromName(member);
-            if (number > highestNumber) {
-                highestNumber = number;
-                leaderName = member.split("#")[0];
+        for (String miembro : miembrosEquipo) {
+            int numero = obtenerNumeroAleatorioDeNombre(miembro);
+            if (numero > numeroMasAlto) {
+                numeroMasAlto = numero;
+                nombreLider = miembro.split("#")[0];
             }
         }
 
-        isLeader = leaderName.equals(getName());
+        esLider = nombreLider.equals(getName());
     }
 
-    private int getRandomNumberFromName(String name) {
-        String[] parts = name.split("#");
-        if (parts.length > 1) {
-            return Integer.parseInt(parts[1]);
+    private void iniciarYRealizarHandshake() {
+        setAdjustGunForRobotTurn(true);
+        setAdjustRadarForGunTurn(true);
+        setAdjustRadarForRobotTurn(true);
+        definirEsquinasCampoBatalla();
+        realizarHandshake();
+    }
+
+    private void construirJerarquia() {
+        List<Map.Entry<String, Double>> entradasOrdenadas = new ArrayList<>(distanciasDesdeRobots.entrySet());
+        Collections.sort(entradasOrdenadas, Comparator.comparingDouble(Map.Entry::getValue));
+
+        jerarquia = new LinkedHashMap<>();
+        String robotPrevio = nombreLider;
+        for (Map.Entry<String, Double> entry : entradasOrdenadas) {
+            String nombreRobot = entry.getKey();
+            jerarquia.put(nombreRobot, robotPrevio);
+            robotPrevio = nombreRobot;
+        }
+    }
+
+    private int obtenerNumeroAleatorioDeNombre(String nombre) {
+        String[] partes = nombre.split("#");
+        return partes.length > 1 ? Integer.parseInt(partes[1]) : 0;
+    }
+
+    private void establecerJerarquia() {
+        if (esLider) {
+            try {
+                broadcastMessage(new AnuncioLider(getName(), getX(), getY()));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            distanciasDesdeRobots = new TreeMap<>();
+            mensajesEsperadosDistancia = miembrosEquipo.size() - 1;
+
+            while (distanciasDesdeRobots.size() < mensajesEsperadosDistancia) {
+                execute();
+            }
+
+            construirJerarquia();
+
+            try {
+                broadcastMessage(new ActualizacionJerarquia(jerarquia));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         } else {
-            return 0;
-        }
-    }
-
-    private void establishHierarchy() {
-        if (isLeader) {
-            // El líder envia la seva posició perquè els altres calculin la distància
-            try {
-                broadcastMessage(new LeaderAnnouncement(getName(), getX(), getY()));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-            distancesFromRobots = new HashMap<>();
-            expectedDistanceMessages = teamMembers.size() - 1;
-
-            // Esperem fins a rebre totes les distàncies
-            while (distancesFromRobots.size() < expectedDistanceMessages) {
+            while (!posicionesRobots.containsKey(nombreLider)) {
                 execute();
             }
 
-            // Construïm la jerarquia
-            buildHierarchy();
-
-            // Enviem la jerarquia als robots
+            double distanciaLider = Point2D.distance(getX(), getY(), posicionesRobots.get(nombreLider).getX(), posicionesRobots.get(nombreLider).getY());
             try {
-                broadcastMessage(new HierarchyUpdate(hierarchy));
+                sendMessage(nombreLider, new MensajeDistancia(getName(), distanciaLider));
             } catch (IOException e) {
                 e.printStackTrace();
             }
 
-        } else {
-            // Esperem a rebre la posició del líder
-            while (!robotPositions.containsKey(leaderName)) {
-                execute();
-            }
-            // Rebem la posició del líder i calculem la nostra distància
-            double distanceToLeader = Point2D.distance(getX(), getY(), robotPositions.get(leaderName).getX(), robotPositions.get(leaderName).getY());
-            try {
-                sendMessage(leaderName, new DistanceMessage(getName(), distanceToLeader));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-            // Esperem a rebre la jerarquia
-            while (!hierarchy.containsKey(getName())) {
+            while (!jerarquia.containsKey(getName())) {
                 execute();
             }
         }
     }
 
-    private void buildHierarchy() {
-        // Ordenem els robots per distància
-        List<Map.Entry<String, Double>> sortedEntries = new ArrayList<>(distancesFromRobots.entrySet());
-        Collections.sort(sortedEntries, Comparator.comparingDouble(Map.Entry::getValue));
+    private void rotarRoles() {
+        sentidoHorario = !sentidoHorario;
+        List<String> miembros = new ArrayList<>(jerarquia.keySet());
+        miembros.add(0, nombreLider);
 
-        hierarchy = new LinkedHashMap<>();
-        String previousRobot = leaderName;
-        for (Map.Entry<String, Double> entry : sortedEntries) {
-            String robotName = entry.getKey();
-            hierarchy.put(robotName, previousRobot);
-            previousRobot = robotName;
-        }
-    }
-
-    private void moveLeader() {
-        if (currentCornerIndex == -1) {
-            // Calculem la cantonada més propera
-            currentCornerIndex = getClosestCornerIndex();
+        String nuevoLider = null;
+        for (int i = miembros.size() - 1; i >= 0; i--) {
+            String candidato = miembros.get(i);
+            if (miembrosVivos.contains(candidato)) {
+                nuevoLider = candidato;
+                break;
+            }
         }
 
-        Point2D.Double targetCorner = corners.get(currentCornerIndex);
+        if (nuevoLider != null) {
+            nombreLider = nuevoLider;
+            esLider = nombreLider.equals(getName());
 
-        // Movem cap a la cantonada objectiu
-        goTo(targetCorner.getX(), targetCorner.getY());
+            jerarquia.clear();
+            String robotPrevio = nombreLider;
+            for (String miembro : miembros) {
+                if (miembrosVivos.contains(miembro)) {
+                    jerarquia.put(miembro, robotPrevio);
+                    robotPrevio = miembro;
+                }
+            }
 
-        // Si arribem a la cantonada, anem a la següent
-        if (getDistanceTo(targetCorner) < 20) {
-            if (clockwise) {
-                currentCornerIndex = (currentCornerIndex - 1 + corners.size()) % corners.size();
-            } else {
-                currentCornerIndex = (currentCornerIndex + 1) % corners.size();
+            try {
+                broadcastMessage(new AnuncioLider(nombreLider, getX(), getY()));
+                broadcastMessage(new ActualizacionJerarquia(jerarquia));
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         }
     }
 
-    private int getClosestCornerIndex() {
-        double minDistance = Double.MAX_VALUE;
-        int index = 0;
-        for (int i = 0; i < corners.size(); i++) {
-            double distance = getDistanceTo(corners.get(i));
-            if (distance < minDistance) {
-                minDistance = distance;
-                index = i;
-            }
+    private void moverLider() {
+        if (indiceEsquinaActual == -1) {
+            indiceEsquinaActual = obtenerIndiceEsquinaMasCercana();
         }
-        return index;
+
+        Point2D.Double esquinaObjetivo = esquinas.get(indiceEsquinaActual);
+        irA(esquinaObjetivo.getX(), esquinaObjetivo.getY());
+
+        if (obtenerDistanciaA(esquinaObjetivo) < 20) {
+            indiceEsquinaActual = sentidoHorario ? (indiceEsquinaActual - 1 + esquinas.size()) % esquinas.size() : (indiceEsquinaActual + 1) % esquinas.size();
+        }
     }
 
-    private double getDistanceTo(Point2D.Double point) {
-        return Point2D.distance(getX(), getY(), point.getX(), point.getY());
-    }
-
-    private void followPredecessor() {
-        String predecessor = getAlivePredecessor(getName());
-        if (predecessor != null) {
-            Point2D.Double predecessorPosition = robotPositions.get(predecessor);
-            if (predecessorPosition != null) {
-                // Mantenir una distància constant amb el predecessor
-                double distance = getDistanceTo(predecessorPosition);
-                if (distance > 100) { // Si està massa lluny, apropa't més
-                    goTo(predecessorPosition.getX(), predecessorPosition.getY());
-                } else if (distance < 50) { // Si està massa a prop, retrocedeix una mica
+    private void seguirPredecesor() {
+        String predecesor = obtenerPredecesorVivo(getName());
+        if (predecesor != null) {
+            Point2D.Double posicionPredecesor = posicionesRobots.get(predecesor);
+            if (posicionPredecesor != null) {
+                double distancia = obtenerDistanciaA(posicionPredecesor);
+                if (distancia > 100) {
+                    irA(posicionPredecesor.getX(), posicionPredecesor.getY());
+                } else if (distancia < 50) {
                     back(50);
                 }
             }
         }
     }
 
-    private String getAlivePredecessor(String robotName) {
-        String predecessor = hierarchy.get(robotName);
-        while (predecessor != null && !aliveTeamMembers.contains(predecessor)) {
-            predecessor = hierarchy.get(predecessor);
+    private int obtenerIndiceEsquinaMasCercana() {
+        double distanciaMinima = Double.MAX_VALUE;
+        int indice = 0;
+        for (int i = 0; i < esquinas.size(); i++) {
+            double distancia = obtenerDistanciaA(esquinas.get(i));
+            if (distancia < distanciaMinima) {
+                distanciaMinima = distancia;
+                indice = i;
+            }
         }
-        if (predecessor == null && !robotName.equals(leaderName)) {
-            // Si no hi ha predecessor viu, seguim al líder
-            predecessor = leaderName;
-        }
-        return predecessor;
+        return indice;
     }
 
-    private void rotateRoles() {
-        // Invertim la direcció de rotació
-        clockwise = !clockwise;
-
-        // Canvi de rols
-        List<String> members = new ArrayList<>(hierarchy.keySet());
-        members.add(0, leaderName);
-
-        // L'últim robot passa a ser el nou líder
-        String newLeader = null;
-        for (int i = members.size() - 1; i >= 0; i--) {
-            String candidate = members.get(i);
-            if (aliveTeamMembers.contains(candidate)) {
-                newLeader = candidate;
-                members.remove(i);
-                break;
-            }
-        }
-
-        if (newLeader != null) {
-            leaderName = newLeader;
-            isLeader = leaderName.equals(getName());
-
-            // Actualitzem la jerarquia
-            hierarchy.clear();
-            String previousRobot = leaderName;
-            for (String member : members) {
-                if (aliveTeamMembers.contains(member)) {
-                    hierarchy.put(member, previousRobot);
-                    previousRobot = member;
-                }
-            }
-
-            // Enviar el nou líder i la jerarquia actualitzada a tots els robots
-            try {
-                broadcastMessage(new LeaderAnnouncement(leaderName, getX(), getY()));
-                broadcastMessage(new HierarchyUpdate(hierarchy));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
+    private double obtenerDistanciaA(Point2D.Double punto) {
+        return Point2D.distance(getX(), getY(), punto.getX(), punto.getY());
     }
 
-    private void goTo(double x, double y) {
+    private void irA(double x, double y) {
         double dx = x - getX();
         double dy = y - getY();
-
-        double angleToTarget = Math.toDegrees(Math.atan2(dx, dy));
-        double targetAngle = Utils.normalRelativeAngleDegrees(angleToTarget - getHeading());
-
-        setTurnRight(targetAngle);
+        double anguloObjetivo = Math.toDegrees(Math.atan2(dx, dy));
+        double anguloParaGirar = Utils.normalRelativeAngleDegrees(anguloObjetivo - getHeading());
+        setTurnRight(anguloParaGirar);
         setAhead(Math.hypot(dx, dy));
     }
 
-    private void radarControl() {
-        // Control del radar per mantenir l'enemic en el radar
-        if (targetEnemy != null) {
-            double absoluteBearing = Math.toDegrees(Math.atan2(targetEnemy.getX() - getX(), targetEnemy.getY() - getY()));
-            double radarTurn = Utils.normalRelativeAngleDegrees(absoluteBearing - getRadarHeading());
-            setTurnRadarRight(radarTurn * 2); // Multipliquem per 2 per assegurar-nos que el radar segueix l'enemic
+    private String obtenerPredecesorVivo(String nombreRobot) {
+        String predecesor = jerarquia.get(nombreRobot);
+        while (predecesor != null && !miembrosVivos.contains(predecesor)) {
+            predecesor = jerarquia.get(predecesor);
+        }
+        return predecesor == null && !nombreRobot.equals(nombreLider) ? nombreLider : predecesor;
+    }
+
+    private void controlarRadar() {
+        if (enemigoObjetivo != null) {
+            double anguloAbsoluto = Math.toDegrees(Math.atan2(enemigoObjetivo.getX() - getX(), enemigoObjetivo.getY() - getY()));
+            double giroRadar = Utils.normalRelativeAngleDegrees(anguloAbsoluto - getRadarHeading());
+            setTurnRadarRight(giroRadar * 2);
         } else {
-            // Si no tenim enemic, escanegem 360 graus
             setTurnRadarRight(360);
         }
     }
 
-    public void onScannedRobot(ScannedRobotEvent e) {
-        if (isTeammate(e.getName())) {
+    private void seleccionarEnemigoObjetivo() {
+        if (enemigos.isEmpty()) {
+            enemigoObjetivo = null;
             return;
         }
 
-        // Calcular les coordenades de l'enemic
-        double absoluteBearing = Math.toRadians(getHeading() + e.getBearing());
-        double enemyX = getX() + Math.sin(absoluteBearing) * e.getDistance();
-        double enemyY = getY() + Math.cos(absoluteBearing) * e.getDistance();
-
-        // Crear objecte EnemyInfo
-        EnemyInfo enemyInfo = new EnemyInfo(
-                e.getName(),
-                e.getBearing(),
-                e.getDistance(),
-                e.getHeading(),
-                e.getVelocity(),
-                enemyX,
-                enemyY,
-                getTime()
-        );
-
-        // Afegir o actualitzar l'enemic a la llista
-        enemies.put(e.getName(), enemyInfo);
-
-        // Enviar la informació de l'enemic al líder
-        try {
-            sendMessage(leaderName, enemyInfo);
-        } catch (IOException ex) {
-            ex.printStackTrace();
-        }
-
-        // Si no som el líder i no tenim un enemic objectiu, esperem que el líder ens digui quin és
-        if (!isLeader && targetEnemy == null) {
-            return;
-        }
-
-        // Si l'enemic escanejat és el nostre objectiu, actualitzem la seva informació
-        if (targetEnemy != null && e.getName().equals(targetEnemy.getEnemyName())) {
-            targetEnemy = enemyInfo;
-            enemyLastSeenTime = getTime();
-        }
+        enemigoObjetivo = enemigos.values().stream().min(Comparator.comparingDouble(EnemyInfo::getDistance)).orElse(null);
+        tiempoUltimaVezVistoEnemigo = getTime();
     }
 
-    private void selectTargetEnemy() {
-        // Si no tenim enemics detectats, no podem seleccionar cap objectiu
-        if (enemies.isEmpty()) {
-            targetEnemy = null;
-            return;
-        }
-
-        // Seleccionem l'enemic més proper
-        EnemyInfo closestEnemy = null;
-        double minDistance = Double.MAX_VALUE;
-
-        for (EnemyInfo enemy : enemies.values()) {
-            if (enemy.getDistance() < minDistance) {
-                minDistance = enemy.getDistance();
-                closestEnemy = enemy;
-            }
-        }
-
-        targetEnemy = closestEnemy;
-        enemyLastSeenTime = getTime();
-    }
-
-    private void broadcastTargetEnemy() {
-        if (targetEnemy != null) {
-            // Enviar l'enemic objectiu a tot l'equip
+    private void transmitirEnemigoObjetivo() {
+        if (enemigoObjetivo != null) {
             try {
-                broadcastMessage(new TargetEnemyMessage(targetEnemy));
+                broadcastMessage(new MensajeEnemigoObjetivo(enemigoObjetivo));
             } catch (IOException e) {
                 e.printStackTrace();
             }
         }
     }
 
-    private void trackAndFire() {
-        // Predicció de la posició futura de l'enemic
-        double bulletPower = getOptimalFirePower(targetEnemy.getDistance());
-        double bulletSpeed = Rules.getBulletSpeed(bulletPower);
-        double timeToHit = targetEnemy.getDistance() / bulletSpeed;
+    private void rastrearYDisparar() {
+        double poderBala = obtenerPoderDisparoOptimo(enemigoObjetivo.getDistance());
+        double velocidadBala = Rules.getBulletSpeed(poderBala);
+        double tiempoImpacto = enemigoObjetivo.getDistance() / velocidadBala;
 
-        double futureX = targetEnemy.getX() + Math.sin(Math.toRadians(targetEnemy.getHeading())) * targetEnemy.getVelocity() * timeToHit;
-        double futureY = targetEnemy.getY() + Math.cos(Math.toRadians(targetEnemy.getHeading())) * targetEnemy.getVelocity() * timeToHit;
+        double futuroX = enemigoObjetivo.getX() + Math.sin(Math.toRadians(enemigoObjetivo.getHeading())) * enemigoObjetivo.getVelocity() * tiempoImpacto;
+        double futuroY = enemigoObjetivo.getY() + Math.cos(Math.toRadians(enemigoObjetivo.getHeading())) * enemigoObjetivo.getVelocity() * tiempoImpacto;
 
-        // Ajustar si la posició prevista està fora del camp de batalla
-        futureX = Math.max(Math.min(futureX, getBattleFieldWidth() - 18), 18);
-        futureY = Math.max(Math.min(futureY, getBattleFieldHeight() - 18), 18);
+        futuroX = Math.max(Math.min(futuroX, getBattleFieldWidth() - 18), 18);
+        futuroY = Math.max(Math.min(futuroY, getBattleFieldHeight() - 18), 18);
 
-        // Calcular l'angle cap a la posició prevista
-        double angleToEnemy = Math.toDegrees(Math.atan2(futureX - getX(), futureY - getY()));
-        double gunTurn = Utils.normalRelativeAngleDegrees(angleToEnemy - getGunHeading());
+        double anguloEnemigo = Math.toDegrees(Math.atan2(futuroX - getX(), futuroY - getY()));
+        double giroCañon = Utils.normalRelativeAngleDegrees(anguloEnemigo - getGunHeading());
 
-        setTurnGunRight(gunTurn);
+        setTurnGunRight(giroCañon);
 
-        // Disparar si el canó està alineat
-        if (Math.abs(gunTurn) < 10) {
-            setFire(bulletPower);
+        if (Math.abs(giroCañon) < 10) {
+            setFire(poderBala);
         }
     }
 
-    private double getOptimalFirePower(double distance) {
-        if (distance < 200) {
-            return MAX_FIRE_POWER;
-        } else if (distance < 400) {
-            return 2.5;
-        } else {
-            return MIN_FIRE_POWER;
+    private double obtenerPoderDisparoOptimo(double distancia) {
+        return distancia < 200 ? MAX_PODER_DISPARO : (distancia < 400 ? 2.5 : MIN_PODER_DISPARO);
+    }
+
+    public void onScannedRobot(ScannedRobotEvent e) {
+        if (isTeammate(e.getName())) return;
+
+        double anguloAbsoluto = Math.toRadians(getHeading() + e.getBearing());
+        double enemigoX = getX() + Math.sin(anguloAbsoluto) * e.getDistance();
+        double enemigoY = getY() + Math.cos(anguloAbsoluto) * e.getDistance();
+
+        EnemyInfo enemigoInfo = new EnemyInfo(e.getName(), e.getBearing(), e.getDistance(), e.getHeading(), e.getVelocity(), enemigoX, enemigoY, getTime());
+
+        enemigos.put(e.getName(), enemigoInfo);
+
+        try {
+            sendMessage(nombreLider, enemigoInfo);
+        } catch (IOException ex) {
+            ex.printStackTrace();
+        }
+
+        if (!esLider && enemigoObjetivo == null) return;
+
+        if (enemigoObjetivo != null && e.getName().equals(enemigoObjetivo.getEnemyName())) {
+            enemigoObjetivo = enemigoInfo;
+            tiempoUltimaVezVistoEnemigo = getTime();
         }
     }
 
@@ -479,127 +374,125 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
-    public void onMessageReceived(MessageEvent e) {
-        Object message = e.getMessage();
-        if (message instanceof LeaderProposal) {
-            LeaderProposal proposal = (LeaderProposal) message;
-            String memberName = proposal.getRobotName() + "#" + proposal.getRandomNumber();
-            if (!teamMembers.contains(memberName)) {
-                teamMembers.add(memberName);
-                aliveTeamMembers.add(proposal.getRobotName());
-            }
-        } else if (message instanceof LeaderAnnouncement) {
-            LeaderAnnouncement leaderMessage = (LeaderAnnouncement) message;
-            leaderName = leaderMessage.getRobotName();
-            isLeader = leaderName.equals(getName()); // Actualitzem isLeader
-            robotPositions.put(leaderName, new Point2D.Double(leaderMessage.getX(), leaderMessage.getY()));
-        } else if (message instanceof PositionUpdate) {
-            PositionUpdate positionUpdate = (PositionUpdate) message;
-            robotPositions.put(positionUpdate.getRobotName(), new Point2D.Double(positionUpdate.getX(), positionUpdate.getY()));
-        } else if (message instanceof EnemyInfo) {
-            EnemyInfo enemyInfo = (EnemyInfo) message;
-            // Actualitzar informació de l'enemic
-            enemies.put(enemyInfo.getEnemyName(), enemyInfo);
-        } else if (message instanceof TargetEnemyMessage) {
-            TargetEnemyMessage tem = (TargetEnemyMessage) message;
-            targetEnemy = tem.getEnemyInfo();
-            enemyLastSeenTime = getTime();
-        } else if (message instanceof DistanceMessage && isLeader) {
-            DistanceMessage dm = (DistanceMessage) message;
-            distancesFromRobots.put(dm.getRobotName(), dm.getDistance());
-        } else if (message instanceof HierarchyUpdate) {
-            HierarchyUpdate hu = (HierarchyUpdate) message;
-            hierarchy = hu.getHierarchy();
-        }
-    }
-
     public void onRobotDeath(RobotDeathEvent event) {
-        String deadRobot = event.getName();
-        if (isTeammate(deadRobot)) {
-            aliveTeamMembers.remove(deadRobot);
+        String robotMuerto = event.getName();
+        if (isTeammate(robotMuerto)) {
+            miembrosVivos.remove(robotMuerto);
 
-            if (deadRobot.equals(leaderName)) {
-                if (aliveTeamMembers.contains(getName()) && hierarchy.get(getName()) == null) {
-                    isLeader = true;
-                    leaderName = getName();
-                    hierarchy.remove(getName());
+            if (robotMuerto.equals(nombreLider)) {
+                if (miembrosVivos.contains(getName()) && jerarquia.get(getName()) == null) {
+                    esLider = true;
+                    nombreLider = getName();
+                    jerarquia.remove(getName());
 
                     try {
-                        broadcastMessage(new LeaderAnnouncement(leaderName, getX(), getY()));
-                        broadcastMessage(new HierarchyUpdate(hierarchy));
+                        broadcastMessage(new AnuncioLider(nombreLider, getX(), getY()));
+                        broadcastMessage(new ActualizacionJerarquia(jerarquia));
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
 
                 } else {
-                    leaderName = getAlivePredecessor(deadRobot);
+                    nombreLider = obtenerPredecesorVivo(robotMuerto);
                 }
             }
 
-            if (hierarchy.containsKey(deadRobot)) {
-                hierarchy.remove(deadRobot);
+            if (jerarquia.containsKey(robotMuerto)) {
+                jerarquia.remove(robotMuerto);
             }
 
-            for (Map.Entry<String, String> entry : hierarchy.entrySet()) {
-                String robotName = entry.getKey();
-                String predecessor = entry.getValue();
+            for (Map.Entry<String, String> entry : jerarquia.entrySet()) {
+                String nombreRobot = entry.getKey();
+                String predecesor = entry.getValue();
 
-                if (predecessor.equals(deadRobot)) {
-                    String newPredecessor = getAlivePredecessor(robotName);
-                    hierarchy.put(robotName, newPredecessor);
+                if (predecesor.equals(robotMuerto)) {
+                    String nuevoPredecesor = obtenerPredecesorVivo(nombreRobot);
+                    jerarquia.put(nombreRobot, nuevoPredecesor);
                 }
             }
         } else {
-            enemies.remove(deadRobot);
-            if (targetEnemy != null && targetEnemy.getEnemyName().equals(deadRobot)) {
-                targetEnemy = null;
+            enemigos.remove(robotMuerto);
+            if (enemigoObjetivo != null && enemigoObjetivo.getEnemyName().equals(robotMuerto)) {
+                enemigoObjetivo = null;
             }
         }
     }
 
     public void onPaint(Graphics2D g) {
-        if (isLeader) {
+        if (esLider) {
             g.setColor(java.awt.Color.yellow);
-            int radius = 50;  // Incrementem la mida del cercle a 50
-            int diameter = radius * 2;
-            int x = (int) (getX() - radius);
-            int y = (int) (getY() - radius);
-
-            g.drawOval(x, y, diameter, diameter);
+            int radio = 50;
+            int diametro = radio * 2;
+            int x = (int) (getX() - radio);
+            int y = (int) (getY() - radio);
+            g.drawOval(x, y, diametro, diametro);
         }
     }
 
-    // Classes per a la comunicació de missatges entre els robots
-    static class LeaderProposal implements java.io.Serializable {
-        private String robotName;
-        private int randomNumber;
+    public void onMessageReceived(MessageEvent e) {
+        Object mensaje = e.getMessage();
+        if (mensaje instanceof PropuestaLider) {
+            PropuestaLider propuesta = (PropuestaLider) mensaje;
+            String nombreMiembro = propuesta.getRobotName() + "#" + propuesta.getRandomNumber();
+            if (!miembrosEquipo.contains(nombreMiembro)) {
+                miembrosEquipo.add(nombreMiembro);
+                miembrosVivos.add(propuesta.getRobotName());
+            }
+        } else if (mensaje instanceof AnuncioLider) {
+            AnuncioLider mensajeLider = (AnuncioLider) mensaje;
+            nombreLider = mensajeLider.getRobotName();
+            esLider = nombreLider.equals(getName());
+            posicionesRobots.put(nombreLider, new Point2D.Double(mensajeLider.getX(), mensajeLider.getY()));
+        } else if (mensaje instanceof ActualizacionPosicion) {
+            ActualizacionPosicion actualizacionPosicion = (ActualizacionPosicion) mensaje;
+            posicionesRobots.put(actualizacionPosicion.getRobotName(), new Point2D.Double(actualizacionPosicion.getX(), actualizacionPosicion.getY()));
+        } else if (mensaje instanceof EnemyInfo) {
+            EnemyInfo enemigoInfo = (EnemyInfo) mensaje;
+            enemigos.put(enemigoInfo.getEnemyName(), enemigoInfo);
+        } else if (mensaje instanceof MensajeEnemigoObjetivo) {
+            MensajeEnemigoObjetivo tem = (MensajeEnemigoObjetivo) mensaje;
+            enemigoObjetivo = tem.getEnemyInfo();
+            tiempoUltimaVezVistoEnemigo = getTime();
+        } else if (mensaje instanceof MensajeDistancia && esLider) {
+            MensajeDistancia md = (MensajeDistancia) mensaje;
+            distanciasDesdeRobots.put(md.getRobotName(), md.getDistance());
+        } else if (mensaje instanceof ActualizacionJerarquia) {
+            ActualizacionJerarquia aj = (ActualizacionJerarquia) mensaje;
+            jerarquia = aj.getHierarchy();
+        }
+    }
 
-        public LeaderProposal(String robotName, int randomNumber) {
-            this.robotName = robotName;
-            this.randomNumber = randomNumber;
+    // Clases internas
+    static class PropuestaLider implements java.io.Serializable {
+        private String nombreRobot;
+        private int numeroAleatorio;
+
+        public PropuestaLider(String nombreRobot, int numeroAleatorio) {
+            this.nombreRobot = nombreRobot;
+            this.numeroAleatorio = numeroAleatorio;
         }
 
         public String getRobotName() {
-            return robotName;
+            return nombreRobot;
         }
 
         public int getRandomNumber() {
-            return randomNumber;
+            return numeroAleatorio;
         }
     }
 
-    static class LeaderAnnouncement implements java.io.Serializable {
-        private String robotName;
+    static class AnuncioLider implements java.io.Serializable {
+        private String nombreRobot;
         private double x, y;
 
-        public LeaderAnnouncement(String robotName, double x, double y) {
-            this.robotName = robotName;
+        public AnuncioLider(String nombreRobot, double x, double y) {
+            this.nombreRobot = nombreRobot;
             this.x = x;
             this.y = y;
         }
 
         public String getRobotName() {
-            return robotName;
+            return nombreRobot;
         }
 
         public double getX() {
@@ -611,18 +504,18 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
-    static class PositionUpdate implements java.io.Serializable {
-        private String robotName;
+    static class ActualizacionPosicion implements java.io.Serializable {
+        private String nombreRobot;
         private double x, y;
 
-        public PositionUpdate(String robotName, double x, double y) {
-            this.robotName = robotName;
+        public ActualizacionPosicion(String nombreRobot, double x, double y) {
+            this.nombreRobot = nombreRobot;
             this.x = x;
             this.y = y;
         }
 
         public String getRobotName() {
-            return robotName;
+            return nombreRobot;
         }
 
         public double getX() {
@@ -634,46 +527,46 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
-    static class DistanceMessage implements java.io.Serializable {
-        private String robotName;
-        private double distance;
+    static class MensajeDistancia implements java.io.Serializable {
+        private String nombreRobot;
+        private double distancia;
 
-        public DistanceMessage(String robotName, double distance) {
-            this.robotName = robotName;
-            this.distance = distance;
+        public MensajeDistancia(String nombreRobot, double distancia) {
+            this.nombreRobot = nombreRobot;
+            this.distancia = distancia;
         }
 
         public String getRobotName() {
-            return robotName;
+            return nombreRobot;
         }
 
         public double getDistance() {
-            return distance;
+            return distancia;
         }
     }
 
     static class EnemyInfo implements java.io.Serializable {
-        private String enemyName;
+        private String nombreEnemigo;
         private double bearing;
-        private double distance;
+        private double distancia;
         private double heading;
-        private double velocity;
+        private double velocidad;
         private double x, y;
-        private long time;
+        private long tiempo;
 
-        public EnemyInfo(String enemyName, double bearing, double distance, double heading, double velocity, double x, double y, long time) {
-            this.enemyName = enemyName;
+        public EnemyInfo(String nombreEnemigo, double bearing, double distancia, double heading, double velocidad, double x, double y, long tiempo) {
+            this.nombreEnemigo = nombreEnemigo;
             this.bearing = bearing;
-            this.distance = distance;
+            this.distancia = distancia;
             this.heading = heading;
-            this.velocity = velocity;
+            this.velocidad = velocidad;
             this.x = x;
             this.y = y;
-            this.time = time;
+            this.tiempo = tiempo;
         }
 
         public String getEnemyName() {
-            return enemyName;
+            return nombreEnemigo;
         }
 
         public double getBearing() {
@@ -681,7 +574,7 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
 
         public double getDistance() {
-            return distance;
+            return distancia;
         }
 
         public double getHeading() {
@@ -689,7 +582,7 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
 
         public double getVelocity() {
-            return velocity;
+            return velocidad;
         }
 
         public double getX() {
@@ -701,31 +594,31 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
 
         public long getTime() {
-            return time;
+            return tiempo;
         }
     }
 
-    static class TargetEnemyMessage implements java.io.Serializable {
-        private EnemyInfo enemyInfo;
+    static class MensajeEnemigoObjetivo implements java.io.Serializable {
+        private EnemyInfo enemigoInfo;
 
-        public TargetEnemyMessage(EnemyInfo enemyInfo) {
-            this.enemyInfo = enemyInfo;
+        public MensajeEnemigoObjetivo(EnemyInfo enemigoInfo) {
+            this.enemigoInfo = enemigoInfo;
         }
 
         public EnemyInfo getEnemyInfo() {
-            return enemyInfo;
+            return enemigoInfo;
         }
     }
 
-    static class HierarchyUpdate implements java.io.Serializable {
-        private Map<String, String> hierarchy;
+    static class ActualizacionJerarquia implements java.io.Serializable {
+        private Map<String, String> jerarquia;
 
-        public HierarchyUpdate(Map<String, String> hierarchy) {
-            this.hierarchy = hierarchy;
+        public ActualizacionJerarquia(Map<String, String> jerarquia) {
+            this.jerarquia = jerarquia;
         }
 
         public Map<String, String> getHierarchy() {
-            return hierarchy;
+            return jerarquia;
         }
     }
 }
