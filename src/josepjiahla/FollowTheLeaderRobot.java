@@ -25,11 +25,10 @@ public class FollowTheLeaderRobot extends TeamRobot {
     private long tiempoUltimaVezVistoEnemigo = 0;
     private TreeMap<String, Double> distanciasDesdeRobots = new TreeMap<>(); // Cambiado a TreeMap
     private int mensajesEsperadosDistancia = 0;
-    private static final double MAX_PODER_DISPARO = 3.0;
-    private static final double MIN_PODER_DISPARO = 1.0;
+    
 
     public void run() {
-        
+       
         setColors(Color.BLACK, Color.GREEN, Color.GREEN);
         iniciarYRealizarHandshake();
         tiempoUltimoCambioRol = getTime();
@@ -80,13 +79,18 @@ public class FollowTheLeaderRobot extends TeamRobot {
     // Orden reestructurado de las funciones privadas, pero sin cambiar su lógica.
 
     private void definirEsquinasCampoBatalla() {
-        double margenX = getBattleFieldWidth() * 0.1;
-        double margenY = getBattleFieldHeight() * 0.1;
-        esquinas.add(new Point2D.Double(margenX, margenY));
-        esquinas.add(new Point2D.Double(getBattleFieldWidth() - margenX, margenY));
-        esquinas.add(new Point2D.Double(getBattleFieldWidth() - margenX, getBattleFieldHeight() - margenY));
-        esquinas.add(new Point2D.Double(margenX, getBattleFieldHeight() - margenY));
-    }
+    // Coordenades fixes basades en el camp de batalla de 1000x800
+    double margenX = 100;  
+    double margenY = 80;  
+
+    // Definir les cantonades de la batalla
+    esquinas.add(new Point2D.Double(margenX, margenY)); // Esquerra inferior
+    esquinas.add(new Point2D.Double(1000 - margenX, margenY)); // Dreta inferior
+    esquinas.add(new Point2D.Double(1000 - margenX, 800 - margenY)); // Dreta superior
+    esquinas.add(new Point2D.Double(margenX, 800 - margenY)); // Esquerra superior
+}
+
+
 
     private void realizarHandshake() {
         int miNumeroAleatorio = (int) (Math.random() * 1000);
@@ -224,17 +228,25 @@ public class FollowTheLeaderRobot extends TeamRobot {
     }
 
     private void moverLider() {
-        if (indiceEsquinaActual == -1) {
-            indiceEsquinaActual = obtenerIndiceEsquinaMasCercana();
-        }
-
-        Point2D.Double esquinaObjetivo = esquinas.get(indiceEsquinaActual);
-        irA(esquinaObjetivo.getX(), esquinaObjetivo.getY());
-
-        if (obtenerDistanciaA(esquinaObjetivo) < 20) {
-            indiceEsquinaActual = sentidoHorario ? (indiceEsquinaActual - 1 + esquinas.size()) % esquinas.size() : (indiceEsquinaActual + 1) % esquinas.size();
-        }
+    if (indiceEsquinaActual == -1) {
+        // Si es la primera vez, busca la esquina más cercana
+        indiceEsquinaActual = obtenerIndiceEsquinaMasCercana();
     }
+
+    // Define la esquina objetivo a la que se dirige
+    Point2D.Double esquinaObjetivo = esquinas.get(indiceEsquinaActual);
+    
+    // Mueve el robot hacia esa esquina
+    irA(esquinaObjetivo.getX(), esquinaObjetivo.getY());
+
+    // Si ya llegó a la esquina (distancia menor a un umbral)
+    if (obtenerDistanciaA(esquinaObjetivo) < 20) {
+        // Actualiza el índice de la siguiente esquina en sentido horario
+        // Avanza a la siguiente esquina en sentido horario
+        indiceEsquinaActual = (indiceEsquinaActual + 1) % esquinas.size();
+    }
+}
+
 
     private void seguirPredecesor() {
         String predecesor = obtenerPredecesorVivo(getName());
@@ -337,7 +349,7 @@ public class FollowTheLeaderRobot extends TeamRobot {
     }
 
     private double obtenerPoderDisparoOptimo(double distancia) {
-        return distancia < 200 ? MAX_PODER_DISPARO : (distancia < 400 ? 2.5 : MIN_PODER_DISPARO);
+        return distancia < 200 ? 3.0 : (distancia < 400 ? 2.5 : 1.0);
     }
 
     public void onScannedRobot(ScannedRobotEvent e) {
@@ -419,15 +431,15 @@ public class FollowTheLeaderRobot extends TeamRobot {
     }
 
     public void onPaint(Graphics2D g) {
-        if (esLider) {
-            g.setColor(java.awt.Color.yellow);
-            int radio = 50;
-            int diametro = radio * 2;
-            int x = (int) (getX() - radio);
-            int y = (int) (getY() - radio);
-            g.drawOval(x, y, diametro, diametro);
-        }
+    if (esLider) {
+        g.setColor(java.awt.Color.YELLOW);  // Asegúrate de usar colores válidos
+        int radio = 50;
+        int diametro = radio * 2;
+        int x = (int) (getX() - radio);
+        int y = (int) (getY() - radio);
+        g.drawOval(x, y, diametro, diametro);
     }
+}
 
     public void onMessageReceived(MessageEvent e) {
         Object mensaje = e.getMessage();
