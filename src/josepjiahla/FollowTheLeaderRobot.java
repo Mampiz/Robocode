@@ -13,26 +13,25 @@ public class FollowTheLeaderRobot extends TeamRobot {
     private boolean esLider = false;
     private String nombreLider = null;
     private List<String> miembrosEquipo = new ArrayList<>();
-    private TreeMap<String, Point2D.Double> posicionesRobots = new TreeMap<>(); // Cambiado a TreeMap
+    private TreeMap<String, Point2D.Double> posicionesRobots = new TreeMap<>();
     private Map<String, String> jerarquia = new LinkedHashMap<>();
     private Set<String> miembrosVivos = new HashSet<>();
     private List<Point2D.Double> esquinas = new ArrayList<>();
     private int indiceEsquinaActual = -1;
     private boolean sentidoHorario = true;
     private long tiempoUltimoCambioRol = 0;
-    private TreeMap<String, EnemyInfo> enemigos = new TreeMap<>(); // Cambiado a TreeMap
+    private TreeMap<String, EnemyInfo> enemigos = new TreeMap<>();
     private EnemyInfo enemigoObjetivo = null;
     private long tiempoUltimaVezVistoEnemigo = 0;
-    private TreeMap<String, Double> distanciasDesdeRobots = new TreeMap<>(); // Cambiado a TreeMap
+    private TreeMap<String, Double> distanciasDesdeRobots = new TreeMap<>();
     private int mensajesEsperadosDistancia = 0;
-    
 
     public void run() {
-       
         setColors(Color.BLACK, Color.GREEN, Color.GREEN);
         iniciarYRealizarHandshake();
         tiempoUltimoCambioRol = getTime();
 
+        // Solo agregar miembros vivos si la jerarquía está establecida
         while (!jerarquia.containsKey(getName()) && !esLider) {
             execute();
         }
@@ -76,21 +75,15 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
-    // Orden reestructurado de las funciones privadas, pero sin cambiar su lógica.
-
     private void definirEsquinasCampoBatalla() {
-    // Coordenades fixes basades en el camp de batalla de 1000x800
-    double margenX = 100;  
-    double margenY = 80;  
+        double margenX = 100;
+        double margenY = 80;
 
-    // Definir les cantonades de la batalla
-    esquinas.add(new Point2D.Double(margenX, margenY)); // Esquerra inferior
-    esquinas.add(new Point2D.Double(1000 - margenX, margenY)); // Dreta inferior
-    esquinas.add(new Point2D.Double(1000 - margenX, 800 - margenY)); // Dreta superior
-    esquinas.add(new Point2D.Double(margenX, 800 - margenY)); // Esquerra superior
-}
-
-
+        esquinas.add(new Point2D.Double(margenX, margenY)); // Esquina inferior izquierda
+        esquinas.add(new Point2D.Double(1000 - margenX, margenY)); // Esquina inferior derecha
+        esquinas.add(new Point2D.Double(1000 - margenX, 800 - margenY)); // Esquina superior derecha
+        esquinas.add(new Point2D.Double(margenX, 800 - margenY)); // Esquina superior izquierda
+    }
 
     private void realizarHandshake() {
         int miNumeroAleatorio = (int) (Math.random() * 1000);
@@ -228,25 +221,18 @@ public class FollowTheLeaderRobot extends TeamRobot {
     }
 
     private void moverLider() {
-    if (indiceEsquinaActual == -1) {
-        // Si es la primera vez, busca la esquina más cercana
-        indiceEsquinaActual = obtenerIndiceEsquinaMasCercana();
+        if (indiceEsquinaActual == -1) {
+            indiceEsquinaActual = obtenerIndiceEsquinaMasCercana();
+        }
+
+        Point2D.Double esquinaObjetivo = esquinas.get(indiceEsquinaActual);
+        irA(esquinaObjetivo.getX(), esquinaObjetivo.getY());
+
+        // Verificar si ya llegó a la esquina objetivo
+        if (obtenerDistanciaA(esquinaObjetivo) < 20) {
+            indiceEsquinaActual = (indiceEsquinaActual + 1) % esquinas.size();
+        }
     }
-
-    // Define la esquina objetivo a la que se dirige
-    Point2D.Double esquinaObjetivo = esquinas.get(indiceEsquinaActual);
-    
-    // Mueve el robot hacia esa esquina
-    irA(esquinaObjetivo.getX(), esquinaObjetivo.getY());
-
-    // Si ya llegó a la esquina (distancia menor a un umbral)
-    if (obtenerDistanciaA(esquinaObjetivo) < 20) {
-        // Actualiza el índice de la siguiente esquina en sentido horario
-        // Avanza a la siguiente esquina en sentido horario
-        indiceEsquinaActual = (indiceEsquinaActual + 1) % esquinas.size();
-    }
-}
-
 
     private void seguirPredecesor() {
         String predecesor = obtenerPredecesorVivo(getName());
@@ -312,7 +298,6 @@ public class FollowTheLeaderRobot extends TeamRobot {
             enemigoObjetivo = null;
             return;
         }
-
         enemigoObjetivo = enemigos.values().stream().min(Comparator.comparingDouble(EnemyInfo::getDistance)).orElse(null);
         tiempoUltimaVezVistoEnemigo = getTime();
     }
@@ -390,6 +375,7 @@ public class FollowTheLeaderRobot extends TeamRobot {
         String robotMuerto = event.getName();
         if (isTeammate(robotMuerto)) {
             miembrosVivos.remove(robotMuerto);
+            posicionesRobots.remove(robotMuerto);
 
             if (robotMuerto.equals(nombreLider)) {
                 if (miembrosVivos.contains(getName()) && jerarquia.get(getName()) == null) {
@@ -403,7 +389,6 @@ public class FollowTheLeaderRobot extends TeamRobot {
                     } catch (IOException e) {
                         e.printStackTrace();
                     }
-
                 } else {
                     nombreLider = obtenerPredecesorVivo(robotMuerto);
                 }
@@ -431,15 +416,15 @@ public class FollowTheLeaderRobot extends TeamRobot {
     }
 
     public void onPaint(Graphics2D g) {
-    if (esLider) {
-        g.setColor(java.awt.Color.YELLOW);  // Asegúrate de usar colores válidos
-        int radio = 50;
-        int diametro = radio * 2;
-        int x = (int) (getX() - radio);
-        int y = (int) (getY() - radio);
-        g.drawOval(x, y, diametro, diametro);
+        if (esLider) {
+            g.setColor(java.awt.Color.YELLOW);
+            int radio = 50;
+            int diametro = radio * 2;
+            int x = (int) (getX() - radio);
+            int y = (int) (getY() - radio);
+            g.drawOval(x, y, diametro, diametro);
+        }
     }
-}
 
     public void onMessageReceived(MessageEvent e) {
         Object mensaje = e.getMessage();
