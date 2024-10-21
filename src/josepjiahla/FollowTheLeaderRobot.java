@@ -25,6 +25,8 @@ public class FollowTheLeaderRobot extends TeamRobot {
     private long lastEnemySeenTime = 0;
     private Map<String, Double> distancesFromCommander = new HashMap<>();
     private int expectedDistanceMessages = 0;
+    
+    private boolean esquivando = false;
 
     // Constantes
     private static final double MAX_FIRE_POWER = 3.0;
@@ -62,13 +64,18 @@ public class FollowTheLeaderRobot extends TeamRobot {
                 lastRoleSwitchTime = currentTime;
             }
 
-            // Comportament segons si és el comandant o no
-            if (isCommander) {
-                navigateCommander();
-                choosePrimaryTarget();
-                broadcastPrimaryTarget();
+            // Comportamiento de esquivar
+            if (esquivando) {
+                esquivarObstaculo();
             } else {
-                followPredecessor();
+                // Comportamiento normal
+                if (isCommander) {
+                    navigateCommander();
+                    choosePrimaryTarget();
+                    broadcastPrimaryTarget();
+                } else {
+                    followPredecessor();
+                }
             }
 
             manageRadar();
@@ -418,40 +425,62 @@ public class FollowTheLeaderRobot extends TeamRobot {
 
     @Override
     public void onScannedRobot(ScannedRobotEvent event) {
-        if (isTeamMember(event.getName())) return;
-
-        double absoluteBearing = Math.toRadians(getHeading() + event.getBearing());
-        double enemyX = getX() + Math.sin(absoluteBearing) * event.getDistance();
-        double enemyY = getY() + Math.cos(absoluteBearing) * event.getDistance();
-
-        EnemyData enemyInfo = new EnemyData(
-                event.getName(),
-                event.getBearing(),
-                event.getDistance(),
-                event.getHeading(),
-                event.getVelocity(),
-                enemyX,
-                enemyY,
-                getTime(),
-                event.getEnergy()
-        );
-
-        detectedEnemies.put(event.getName(), enemyInfo);
-
-        try {
-            sendMessage(currentCommander, enemyInfo);
-        } catch (IOException e) {
-            logError("Failed to send EnemyData to commander", e);
+        if (isTeamMember(event.getName())) {
+            return;
         }
 
-        if (!isCommander && primaryTarget == null) return;
-
-        if (primaryTarget != null && event.getName().equals(primaryTarget.getEnemyName())) {
-            primaryTarget = enemyInfo;
-            lastEnemySeenTime = getTime();
+        double enemyDistance = event.getDistance();
+        if (enemyDistance <= 200) {
+            
+            esquivando = true; 
+        } else {
+            // Mantener el comportamiento de seguimiento del enemigo
+            double absoluteBearing = Math.toRadians(getHeading() + event.getBearing());
+            double enemyX = getX() + Math.sin(absoluteBearing) * enemyDistance;
+            double enemyY = getY() + Math.cos(absoluteBearing) * enemyDistance;
+            EnemyData enemyInfo = new EnemyData(
+                    event.getName(),
+                    event.getBearing(),
+                    enemyDistance,
+                    event.getHeading(),
+                    event.getVelocity(),
+                    enemyX,
+                    enemyY,
+                    getTime(),
+                    event.getEnergy()
+            );
+            detectedEnemies.put(event.getName(), enemyInfo);
+            if (primaryTarget != null && event.getName().equals(primaryTarget.getEnemyName())) {
+                primaryTarget = enemyInfo;
+                lastEnemySeenTime = getTime();
+            }
         }
     }
 
+
+    public void esquivarObstaculo() {
+        double x = getX();
+        double y = getY();
+        double battlefieldWidth = getBattleFieldWidth();
+        double battlefieldHeight = getBattleFieldHeight();
+
+        double distanciaNorte = battlefieldHeight - y;
+        double distanciaSur = y;
+        double distanciaEste = battlefieldWidth - x;
+        double distanciaOeste = x;
+
+        // Decidir hacia dónde girar para evitar el obstáculo y las paredes
+        if (distanciaNorte > distanciaSur && distanciaEste > distanciaOeste) {
+            turnLeft(45);  // Girar a la izquierda si es más seguro
+        } else {
+            turnRight(45); // Girar a la derecha
+        }
+
+        ahead(75); // Avanzar una distancia fija para esquivar el obstáculo
+        esquivando = false; // Terminar el estado de esquivar
+    }
+
+    
     private boolean isTeamMember(String robotName) {
         for (String member : teamMembers) {
             if (member.startsWith(robotName + "#")) return true;
