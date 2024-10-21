@@ -8,8 +8,14 @@ import java.awt.geom.Point2D;
 import java.io.IOException;
 import java.util.*;
 
+/**
+ * Classe FollowTheLeaderRobot. Aquesta classe representa un robot d'equip que segueix una
+ * jerarquia de comandament i que es mou en formacio seguint el lider. El robot pot alternar
+ * els seus rols entre comandant i seguidor depenent de les condicions de la batalla.
+ */
 public class FollowTheLeaderRobot extends TeamRobot {
-    // Variables generales
+
+    // Variables generals
     private boolean isCommander = false;
     private String currentCommander = null;
     private List<String> teamMembers = new ArrayList<>();
@@ -25,13 +31,12 @@ public class FollowTheLeaderRobot extends TeamRobot {
     private long lastEnemySeenTime = 0;
     private Map<String, Double> distancesFromCommander = new HashMap<>();
     private int expectedDistanceMessages = 0;
-    
     private boolean esquivando = false;
 
-    // Constantes
+    // Constants
     private static final double MAX_FIRE_POWER = 3.0;
     private static final double MIN_FIRE_POWER = 1.0;
-    private static final long ROLE_SWITCH_INTERVAL = 300; // 15 seconds assuming 20 ticks/sec
+    private static final long ROLE_SWITCH_INTERVAL = 300;
     private static final double FOLLOW_DISTANCE = 100;
     private static final double RETRAER_DISTANCIA = 50;
     private static final long POSITION_BROADCAST_INTERVAL = 5;
@@ -39,10 +44,14 @@ public class FollowTheLeaderRobot extends TeamRobot {
     private static final double SAFETY_MARGIN = 0.10;
     private static final double DISTANCE_TOLERANCE = 5.0;
 
-    // Variables de movimiento
+    // Variables de moviment
     private Point2D.Double destination = null;
     private boolean isMoving = false;
 
+    /**
+     * Metode principal que s'executa de manera continuada durant la batalla.
+     * Implementa el comportament del robot segons el seu rol actual.
+     */
     @Override
     public void run() {
         setupRobot();
@@ -58,17 +67,17 @@ public class FollowTheLeaderRobot extends TeamRobot {
         while (true) {
             long currentTime = getTime();
 
-            // Rotació de rols periòdica
+            // Rotacio de rols periodica
             if (currentTime - lastRoleSwitchTime >= ROLE_SWITCH_INTERVAL) {
                 switchRoles();
                 lastRoleSwitchTime = currentTime;
             }
 
-            // Comportamiento de esquivar
+            // Comportament d'esquivar
             if (esquivando) {
                 esquivarObstaculo();
             } else {
-                // Comportamiento normal
+                // Comportament normal
                 if (isCommander) {
                     navigateCommander();
                     choosePrimaryTarget();
@@ -80,12 +89,12 @@ public class FollowTheLeaderRobot extends TeamRobot {
 
             manageRadar();
 
-            // Atacar l'enemic si està visible
+            // Atacar l'enemic si es visible
             if (primaryTarget != null && (currentTime - lastEnemySeenTime) < RADAR_SWEEP_INTERVAL) {
                 trackAndFire();
             }
 
-            // Actualització periòdica de posicions
+            // Actualitzacio periodica de posicions
             if (currentTime - lastPositionBroadcast >= POSITION_BROADCAST_INTERVAL) {
                 broadcastLocation();
                 lastPositionBroadcast = currentTime;
@@ -95,6 +104,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Configura els colors del robot i ajusta la seva posicio.
+     */
     private void setupRobot() {
         setColors(Color.BLACK, Color.GREEN, Color.BLACK);
         setAdjustGunForRobotTurn(true);
@@ -103,6 +115,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         defineBattlefieldCorners();
     }
 
+    /**
+     * Defineix els marges de seguretat del camp de batalla, creant una llista de les cantonades.
+     */
     private void defineBattlefieldCorners() {
         double marginX = getBattleFieldWidth() * SAFETY_MARGIN;
         double marginY = getBattleFieldHeight() * SAFETY_MARGIN;
@@ -114,6 +129,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         battlefieldCorners.add(new Point2D.Double(marginX, getBattleFieldHeight() - marginY));
     }
 
+    /**
+     * Inicia el protocol per establir la jerarquia d'equip, seleccionant el comandant.
+     */
     private void initiateHandshake() {
         int randomNumber = (int) (Math.random() * 1000);
         try {
@@ -133,6 +151,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         establishHierarchy();
     }
 
+    /**
+     * Selecciona el comandant en funcio del numero aleatori assignat a cada membre de l'equip.
+     */
     private void selectCommander() {
         int highestNumber = -1;
         String potentialCommander = null;
@@ -151,6 +172,12 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Extreu el numero aleatori assignat a un membre de l'equip.
+     *
+     * @param member El membre de l'equip amb un nom i un numero.
+     * @return El numero aleatori assignat.
+     */
     private int extractRandomNumber(String member) {
         String[] parts = member.split("#");
         try {
@@ -161,6 +188,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Estableix la jerarquia de l'equip basada en la distancia al comandant.
+     */
     private void establishHierarchy() {
         if (isCommander) {
             announceCommander();
@@ -182,6 +212,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Anuncia que aquest robot es el nou comandant.
+     */
     private void announceCommander() {
         try {
             broadcastMessage(new CommanderAnnouncement(getName(), getX(), getY()));
@@ -190,12 +223,18 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Espera fins que es rebi la localitzacio del comandant.
+     */
     private void waitForCommanderLocation() {
         while (!robotLocations.containsKey(currentCommander)) {
             execute();
         }
     }
 
+    /**
+     * Envia la distancia actual al comandant.
+     */
     private void reportDistanceToCommander() {
         Point2D.Double commanderPos = robotLocations.get(currentCommander);
         double distance = Point2D.distance(getX(), getY(), commanderPos.getX(), commanderPos.getY());
@@ -206,12 +245,18 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Espera la jerarquia de l'equip establerta pel comandant.
+     */
     private void waitForHierarchy() {
         while (!teamHierarchy.containsKey(getName())) {
             execute();
         }
     }
 
+    /**
+     * Construeix la jerarquia d'acord amb les distancies dels membres respecte al comandant.
+     */
     private void buildHierarchy() {
         List<Map.Entry<String, Double>> sortedEntries = new ArrayList<>(distancesFromCommander.entrySet());
         sortedEntries.sort(Comparator.comparingDouble(Map.Entry::getValue));
@@ -226,6 +271,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Envia la jerarquia de l'equip a tots els membres.
+     */
     private void broadcastHierarchy() {
         try {
             broadcastMessage(new HierarchyUpdate(teamHierarchy));
@@ -234,6 +282,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Canvia el rol dels robots de manera periodica i selecciona un nou comandant si es necessari.
+     */
     private void switchRoles() {
         clockwise = !clockwise;
         List<String> membersList = new ArrayList<>(teamHierarchy.keySet());
@@ -256,6 +307,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Reconstrueix la jerarquia d'acord amb els membres vius de l'equip.
+     */
     private void rebuildHierarchy(List<String> members) {
         teamHierarchy.clear();
         String previous = currentCommander;
@@ -268,6 +322,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Anuncia el nou comandant a tots els membres de l'equip.
+     */
     private void announceNewCommander() {
         try {
             broadcastMessage(new CommanderAnnouncement(currentCommander, getX(), getY()));
@@ -277,6 +334,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Navega el comandant cap a una cantonada del camp de batalla.
+     */
     private void navigateCommander() {
         if (!isMoving) {
             targetCornerIndex = findNearestCorner();
@@ -293,6 +353,11 @@ public class FollowTheLeaderRobot extends TeamRobot {
         moveTo(destination.getX(), destination.getY());
     }
 
+    /**
+     * Troba la cantonada mes propera al robot.
+     *
+     * @return L'index de la cantonada mes propera.
+     */
     private int findNearestCorner() {
         double minDistance = Double.MAX_VALUE;
         int closestIndex = 0;
@@ -306,10 +371,22 @@ public class FollowTheLeaderRobot extends TeamRobot {
         return closestIndex;
     }
 
+    /**
+     * Calcula la distancia entre el robot i un punt especific.
+     *
+     * @param point El punt amb el qual es vol mesurar la distancia.
+     * @return La distancia fins al punt especificat.
+     */
     private double getDistance(Point2D.Double point) {
         return Point2D.distance(getX(), getY(), point.getX(), point.getY());
     }
 
+    /**
+     * Mou el robot cap a unes coordenades especificades.
+     *
+     * @param x Coordenada X de la destinacio.
+     * @param y Coordenada Y de la destinacio.
+     */
     private void moveTo(double x, double y) {
         double deltaX = x - getX();
         double deltaY = y - getY();
@@ -319,6 +396,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         setAhead(Math.hypot(deltaX, deltaY));
     }
 
+    /**
+     * Segueix el robot predecessor dins la jerarquia.
+     */
     private void followPredecessor() {
         String predecessor = getAlivePredecessor(getName());
         if (predecessor != null) {
@@ -327,13 +407,19 @@ public class FollowTheLeaderRobot extends TeamRobot {
                 double distance = getDistance(predecessorPos);
                 if (distance > FOLLOW_DISTANCE) {
                     moveTo(predecessorPos.getX(), predecessorPos.getY());
-                } else if (distance < RETRAER_DISTANCIA) { // Corrected here
-                    back(RETRAER_DISTANCIA); // Corrected here
+                } else if (distance < RETRAER_DISTANCIA) {
+                    back(RETRAER_DISTANCIA);
                 }
             }
         }
     }
 
+    /**
+     * Retorna el predecessor viu d'un robot dins la jerarquia.
+     *
+     * @param robot El nom del robot.
+     * @return El predecessor viu o el comandant si no hi ha predecessor.
+     */
     private String getAlivePredecessor(String robot) {
         String predecessor = teamHierarchy.get(robot);
         while (predecessor != null && !activeMembers.contains(predecessor)) {
@@ -342,6 +428,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         return (predecessor == null && !robot.equals(currentCommander)) ? currentCommander : predecessor;
     }
 
+    /**
+     * Gestiona el radar per rastrejar l'objectiu primari o escanejar el camp de batalla.
+     */
     private void manageRadar() {
         if (primaryTarget != null) {
             double absoluteBearing = Math.toDegrees(Math.atan2(primaryTarget.getX() - getX(), primaryTarget.getY() - getY()));
@@ -352,6 +441,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Selecciona l'objectiu enemic principal.
+     */
     private void choosePrimaryTarget() {
         if (detectedEnemies.isEmpty()) {
             primaryTarget = null;
@@ -367,6 +459,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Envia el missatge amb l'objectiu enemic principal a l'equip.
+     */
     private void broadcastPrimaryTarget() {
         if (primaryTarget != null) {
             try {
@@ -377,6 +472,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Rastreja l'objectiu i dispara segons la seva posicio prevista.
+     */
     private void trackAndFire() {
         if (primaryTarget == null) return;
 
@@ -400,16 +498,33 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Determina la potència de foc en funcio de la distancia a l'enemic.
+     *
+     * @param distance La distancia a l'enemic.
+     * @return La potència de foc adequada.
+     */
     private double determineFirePower(double distance) {
         if (distance < 200) return MAX_FIRE_POWER;
         if (distance < 400) return 2.5;
         return MIN_FIRE_POWER;
     }
 
+    /**
+     * Limita un valor dins d'un rang especificat.
+     *
+     * @param value El valor a limitar.
+     * @param min El valor minim.
+     * @param max El valor maxim.
+     * @return El valor limitat dins del rang.
+     */
     private double clamp(double value, double min, double max) {
         return Math.max(Math.min(value, max), min);
     }
 
+    /**
+     * Envia la localitzacio actual del robot a l'equip.
+     */
     private void broadcastLocation() {
         try {
             broadcastMessage(new PositionUpdate(getName(), getX(), getY()));
@@ -418,46 +533,20 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Gestiona els errors i imprimeix el missatge d'error.
+     *
+     * @param message El missatge d'error.
+     * @param e L'excepcio que s'ha produït.
+     */
     private void logError(String message, Exception e) {
         System.err.println(message);
         e.printStackTrace();
     }
 
-    @Override
-    public void onScannedRobot(ScannedRobotEvent event) {
-        if (isTeamMember(event.getName())) {
-            return;
-        }
-
-        double enemyDistance = event.getDistance();
-        if (enemyDistance <= 200) {
-            
-            esquivando = true; 
-        } else {
-            // Mantener el comportamiento de seguimiento del enemigo
-            double absoluteBearing = Math.toRadians(getHeading() + event.getBearing());
-            double enemyX = getX() + Math.sin(absoluteBearing) * enemyDistance;
-            double enemyY = getY() + Math.cos(absoluteBearing) * enemyDistance;
-            EnemyData enemyInfo = new EnemyData(
-                    event.getName(),
-                    event.getBearing(),
-                    enemyDistance,
-                    event.getHeading(),
-                    event.getVelocity(),
-                    enemyX,
-                    enemyY,
-                    getTime(),
-                    event.getEnergy()
-            );
-            detectedEnemies.put(event.getName(), enemyInfo);
-            if (primaryTarget != null && event.getName().equals(primaryTarget.getEnemyName())) {
-                primaryTarget = enemyInfo;
-                lastEnemySeenTime = getTime();
-            }
-        }
-    }
-
-
+    /**
+     * Esquiva obstacles o altres robots en la proximitat.
+     */
     public void esquivarObstaculo() {
         double x = getX();
         double y = getY();
@@ -469,18 +558,22 @@ public class FollowTheLeaderRobot extends TeamRobot {
         double distanciaEste = battlefieldWidth - x;
         double distanciaOeste = x;
 
-        // Decidir hacia dónde girar para evitar el obstáculo y las paredes
         if (distanciaNorte > distanciaSur && distanciaEste > distanciaOeste) {
-            turnLeft(45);  // Girar a la izquierda si es más seguro
+            turnLeft(45);
         } else {
-            turnRight(45); // Girar a la derecha
+            turnRight(45);
         }
 
-        ahead(75); // Avanzar una distancia fija para esquivar el obstáculo
-        esquivando = false; // Terminar el estado de esquivar
+        ahead(75);
+        esquivando = false;
     }
 
-    
+    /**
+     * Determina si un robot es membre de l'equip.
+     *
+     * @param robotName El nom del robot a comprovar.
+     * @return True si es membre de l'equip, fals en cas contrari.
+     */
     private boolean isTeamMember(String robotName) {
         for (String member : teamMembers) {
             if (member.startsWith(robotName + "#")) return true;
@@ -488,16 +581,26 @@ public class FollowTheLeaderRobot extends TeamRobot {
         return false;
     }
 
+    /**
+     * Gestiona els esdeveniments quan el robot col·lideix amb un altre.
+     *
+     * @param event L'esdeveniment de col·lisio.
+     */
     @Override
     public void onHitRobot(HitRobotEvent event) {
         if (!isTeamMember(event.getName())) {
             setFire(2);
-            back(RETRAER_DISTANCIA); // Corrected here
+            back(RETRAER_DISTANCIA);
         } else {
             back(20);
         }
     }
 
+    /**
+     * Gestiona la mort d'un robot, actualitzant la jerarquia si es necessari.
+     *
+     * @param event L'esdeveniment de mort del robot.
+     */
     @Override
     public void onRobotDeath(RobotDeathEvent event) {
         String deadRobot = event.getName();
@@ -518,6 +621,11 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Gestiona la mort del comandant, establint un nou comandant si es necessari.
+     *
+     * @param deadCommander El nom del comandant mort.
+     */
     private void handleCommanderDeath(String deadCommander) {
         if (activeMembers.contains(getName()) && teamHierarchy.get(getName()) == null) {
             isCommander = true;
@@ -535,6 +643,11 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Actualitza la jerarquia despres de la mort d'un robot.
+     *
+     * @param deadRobot El nom del robot mort.
+     */
     private void updateHierarchyAfterDeath(String deadRobot) {
         for (Map.Entry<String, String> entry : teamHierarchy.entrySet()) {
             String robot = entry.getKey();
@@ -547,6 +660,11 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Dibuixa un cercle al voltant del robot si es el comandant.
+     *
+     * @param g L'objecte Graphics2D utilitzat per dibuixar.
+     */
     @Override
     public void onPaint(Graphics2D g) {
         if (isCommander) {
@@ -559,6 +677,11 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Gestiona els missatges rebuts per part dels altres membres de l'equip.
+     *
+     * @param event L'esdeveniment de recepcio de missatge.
+     */
     @Override
     public void onMessageReceived(MessageEvent event) {
         Object msg = event.getMessage();
@@ -584,6 +707,11 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Gestiona la proposta de lider rebuda d'un altre robot.
+     *
+     * @param proposal La proposta de lider.
+     */
     private void handleLeaderProposal(LeaderProposal proposal) {
         String name = proposal.getRobotName() + "#" + proposal.getRandomNumber();
         if (!teamMembers.contains(name)) {
@@ -592,35 +720,69 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Gestiona l'anunci d'un nou comandant.
+     *
+     * @param announcement L'anunci del comandant.
+     */
     private void handleCommanderAnnouncement(CommanderAnnouncement announcement) {
         currentCommander = announcement.getCommanderName();
         isCommander = currentCommander.equals(getName());
         robotLocations.put(currentCommander, new Point2D.Double(announcement.getX(), announcement.getY()));
     }
 
+    /**
+     * Actualitza la posicio d'un robot segons un missatge de posicio.
+     *
+     * @param update El missatge d'actualitzacio de posicio.
+     */
     private void handlePositionUpdate(PositionUpdate update) {
         robotLocations.put(update.getRobotName(), new Point2D.Double(update.getX(), update.getY()));
     }
 
+    /**
+     * Gestiona la informacio d'un enemic detectat.
+     *
+     * @param enemy La informacio de l'enemic.
+     */
     private void handleEnemyData(EnemyData enemy) {
         detectedEnemies.put(enemy.getEnemyName(), enemy);
     }
 
+    /**
+     * Gestiona l'objectiu enemic assignat pel comandant.
+     *
+     * @param targetMsg El missatge amb l'objectiu enemic.
+     */
     private void handleEnemyTarget(EnemyTarget targetMsg) {
         primaryTarget = targetMsg.getEnemyInfo();
         lastEnemySeenTime = getTime();
     }
 
+    /**
+     * Gestiona el report de distancia enviat per un altre robot.
+     *
+     * @param report El report de distancia.
+     */
     private void handleDistanceReport(DistanceReport report) {
         distancesFromCommander.put(report.getRobotName(), report.getDistance());
     }
 
+    /**
+     * Gestiona l'actualitzacio de la jerarquia de l'equip.
+     *
+     * @param update L'actualitzacio de la jerarquia.
+     */
     private void handleHierarchyUpdate(HierarchyUpdate update) {
         teamHierarchy.clear();
         teamHierarchy.putAll(update.getHierarchy());
     }
 
     // Classes Internes per Missatges
+
+    /**
+     * Classe per a enviar propostes de lider a l'equip.
+     */
     static class LeaderProposal implements java.io.Serializable {
         private final String robotName;
         private final int randomNumber;
@@ -639,6 +801,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Classe per a enviar anuncis de comandant a l'equip.
+     */
     static class CommanderAnnouncement implements java.io.Serializable {
         private final String commanderName;
         private final double x, y;
@@ -662,6 +827,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Classe per a enviar actualitzacions de posicio a l'equip.
+     */
     static class PositionUpdate implements java.io.Serializable {
         private final String robotName;
         private final double x, y;
@@ -685,6 +853,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Classe per a enviar reportatges de distancia al comandant.
+     */
     static class DistanceReport implements java.io.Serializable {
         private final String robotName;
         private final double distance;
@@ -703,6 +874,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Classe per a emmagatzemar les dades d'un enemic detectat.
+     */
     static class EnemyData implements java.io.Serializable {
         private final String enemyName;
         private final double bearing;
@@ -762,6 +936,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Classe per a enviar objectius enemics a l'equip.
+     */
     static class EnemyTarget implements java.io.Serializable {
         private final EnemyData enemyInfo;
 
@@ -774,6 +951,9 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
+    /**
+     * Classe per a enviar actualitzacions de la jerarquia a l'equip.
+     */
     static class HierarchyUpdate implements java.io.Serializable {
         private final Map<String, String> hierarchy;
 
