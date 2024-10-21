@@ -57,6 +57,7 @@ class Phase0State implements State {
 
 // Estado de la Fase 1 (movimiento hacia la esquina, esquivando obstáculos y disparo)
 class Phase1State implements State {
+
     private final TimidinRobot robot;
     private boolean obstaculo = false;
     private int stopCounter = 0;
@@ -108,14 +109,34 @@ class Phase1State implements State {
     }
 
     public void esquivarObs() {
-        robot.turnRight(45);
-        robot.ahead(75);
+        // Obtener las coordenadas actuales del robot
+        double x = robot.getX();
+        double y = robot.getY();
+        double battlefieldWidth = robot.getBattleFieldWidth();
+        double battlefieldHeight = robot.getBattleFieldHeight();
+
+        // Calcular la distancia a cada pared
+        double distanciaNorte = battlefieldHeight - y;
+        double distanciaSur = y;
+        double distanciaEste = battlefieldWidth - x;
+        double distanciaOeste = x;
+
+        // Determinar hacia qué lado girar
+        if (distanciaNorte > distanciaSur && distanciaEste > distanciaOeste) {
+            // Más lejos del norte y del este => girar a la izquierda
+            robot.turnLeft(45);
+        } else {
+            // Más cerca del sur o del oeste => girar a la derecha
+            robot.turnRight(45);
+        }
+
+        robot.ahead(75);  // Avanzar tras el giro
         robot.execute();
         obstaculo = false;
     }
 
     public void onScannedRobot(ScannedRobotEvent e) {
-        if (e.getDistance() <= 100) {
+        if (e.getDistance() <= 200) {
             robot.setFire(2);
             obstaculo = true;
         }
@@ -125,6 +146,7 @@ class Phase1State implements State {
         obstaculo = true;
     }
 }
+
 
 // Estado de la Fase 2 (detección de enemigos, disparo y reinicio de búsqueda)
 class Phase2State implements State {
