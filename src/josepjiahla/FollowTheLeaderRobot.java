@@ -89,7 +89,7 @@ public class FollowTheLeaderRobot extends TeamRobot {
     }
 
     private void setupRobot() {
-        setColors(Color.ORANGE, Color.ORANGE, Color.GREEN);
+        setColors(Color.BLACK, Color.GREEN, Color.BLACK);
         setAdjustGunForRobotTurn(true);
         setAdjustRadarForGunTurn(true);
         setAdjustRadarForRobotTurn(true);
