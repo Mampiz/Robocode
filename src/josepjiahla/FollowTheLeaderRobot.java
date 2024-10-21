@@ -1,510 +1,627 @@
 package josepjiahla;
 
-import java.awt.Color;
 import robocode.*;
 import robocode.util.Utils;
-
+import java.awt.Color;
 import java.awt.Graphics2D;
 import java.awt.geom.Point2D;
 import java.io.IOException;
 import java.util.*;
 
 public class FollowTheLeaderRobot extends TeamRobot {
-    private boolean esLider = false;
-    private String nombreLider = null;
-    private List<String> miembrosEquipo = new ArrayList<>();
-    private TreeMap<String, Point2D.Double> posicionesRobots = new TreeMap<>(); // Cambiado a TreeMap
-    private Map<String, String> jerarquia = new LinkedHashMap<>();
-    private Set<String> miembrosVivos = new HashSet<>();
-    private List<Point2D.Double> esquinas = new ArrayList<>();
-    private int indiceEsquinaActual = -1;
-    private boolean sentidoHorario = true;
-    private long tiempoUltimoCambioRol = 0;
-    private TreeMap<String, EnemyInfo> enemigos = new TreeMap<>(); // Cambiado a TreeMap
-    private EnemyInfo enemigoObjetivo = null;
-    private long tiempoUltimaVezVistoEnemigo = 0;
-    private TreeMap<String, Double> distanciasDesdeRobots = new TreeMap<>(); // Cambiado a TreeMap
-    private int mensajesEsperadosDistancia = 0;
-    
+    // Variables generales
+    private boolean isCommander = false;
+    private String currentCommander = null;
+    private List<String> teamMembers = new ArrayList<>();
+    private Map<String, Point2D.Double> robotLocations = new HashMap<>();
+    private Map<String, String> teamHierarchy = new LinkedHashMap<>();
+    private Set<String> activeMembers = new HashSet<>();
+    private List<Point2D.Double> battlefieldCorners = new ArrayList<>();
+    private int targetCornerIndex = -1;
+    private boolean clockwise = true;
+    private long lastRoleSwitchTime = 0;
+    private Map<String, EnemyData> detectedEnemies = new HashMap<>();
+    private EnemyData primaryTarget = null;
+    private long lastEnemySeenTime = 0;
+    private Map<String, Double> distancesFromCommander = new HashMap<>();
+    private int expectedDistanceMessages = 0;
 
+    // Constantes
+    private static final double MAX_FIRE_POWER = 3.0;
+    private static final double MIN_FIRE_POWER = 1.0;
+    private static final long ROLE_SWITCH_INTERVAL = 300; // 15 seconds assuming 20 ticks/sec
+    private static final double FOLLOW_DISTANCE = 100;
+    private static final double RETRAER_DISTANCIA = 50;
+    private static final long POSITION_BROADCAST_INTERVAL = 5;
+    private static final long RADAR_SWEEP_INTERVAL = 40;
+    private static final double SAFETY_MARGIN = 0.10;
+    private static final double DISTANCE_TOLERANCE = 5.0;
+
+    // Variables de movimiento
+    private Point2D.Double destination = null;
+    private boolean isMoving = false;
+
+    @Override
     public void run() {
-       
-        setColors(Color.BLACK, Color.GREEN, Color.GREEN);
-        iniciarYRealizarHandshake();
-        tiempoUltimoCambioRol = getTime();
+        setupRobot();
+        initiateHandshake();
+        lastRoleSwitchTime = getTime();
 
-        while (!jerarquia.containsKey(getName()) && !esLider) {
-            execute();
+        for (String member : teamMembers) {
+            activeMembers.add(member.split("#")[0]);
         }
 
-        for (String miembro : miembrosEquipo) {
-            miembrosVivos.add(miembro.split("#")[0]);
-        }
-
-        long tiempoUltimaActualizacionPosicion = 0;
+        long lastPositionBroadcast = 0;
 
         while (true) {
-            if (getTime() - tiempoUltimoCambioRol >= 300) {
-                rotarRoles();
-                tiempoUltimoCambioRol = getTime();
+            long currentTime = getTime();
+
+            // Rotació de rols periòdica
+            if (currentTime - lastRoleSwitchTime >= ROLE_SWITCH_INTERVAL) {
+                switchRoles();
+                lastRoleSwitchTime = currentTime;
             }
 
-            if (esLider) {
-                moverLider();
-                seleccionarEnemigoObjetivo();
-                transmitirEnemigoObjetivo();
+            // Comportament segons si és el comandant o no
+            if (isCommander) {
+                navigateCommander();
+                choosePrimaryTarget();
+                broadcastPrimaryTarget();
             } else {
-                seguirPredecesor();
+                followPredecessor();
             }
 
-            controlarRadar();
+            manageRadar();
 
-            if (enemigoObjetivo != null && (getTime() - tiempoUltimaVezVistoEnemigo) < 8) {
-                rastrearYDisparar();
+            // Atacar l'enemic si està visible
+            if (primaryTarget != null && (currentTime - lastEnemySeenTime) < RADAR_SWEEP_INTERVAL) {
+                trackAndFire();
             }
 
-            if (getTime() - tiempoUltimaActualizacionPosicion >= 5) {
-                try {
-                    broadcastMessage(new ActualizacionPosicion(getName(), getX(), getY()));
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-                tiempoUltimaActualizacionPosicion = getTime();
+            // Actualització periòdica de posicions
+            if (currentTime - lastPositionBroadcast >= POSITION_BROADCAST_INTERVAL) {
+                broadcastLocation();
+                lastPositionBroadcast = currentTime;
             }
 
             execute();
         }
     }
 
-    // Orden reestructurado de las funciones privadas, pero sin cambiar su lógica.
-
-    private void definirEsquinasCampoBatalla() {
-    // Coordenades fixes basades en el camp de batalla de 1000x800
-    double margenX = 100;  
-    double margenY = 80;  
-
-    // Definir les cantonades de la batalla
-    esquinas.add(new Point2D.Double(margenX, margenY)); // Esquerra inferior
-    esquinas.add(new Point2D.Double(1000 - margenX, margenY)); // Dreta inferior
-    esquinas.add(new Point2D.Double(1000 - margenX, 800 - margenY)); // Dreta superior
-    esquinas.add(new Point2D.Double(margenX, 800 - margenY)); // Esquerra superior
-}
-
-
-
-    private void realizarHandshake() {
-        int miNumeroAleatorio = (int) (Math.random() * 1000);
-        try {
-            broadcastMessage(new PropuestaLider(getName(), miNumeroAleatorio));
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-
-        miembrosEquipo.add(getName() + "#" + miNumeroAleatorio);
-
-        long tiempoEspera = getTime() + 5;
-        while (getTime() < tiempoEspera) {
-            execute();
-        }
-
-        seleccionarLider();
-        establecerJerarquia();
-    }
-
-    private void seleccionarLider() {
-        int numeroMasAlto = -1;
-
-        for (String miembro : miembrosEquipo) {
-            int numero = obtenerNumeroAleatorioDeNombre(miembro);
-            if (numero > numeroMasAlto) {
-                numeroMasAlto = numero;
-                nombreLider = miembro.split("#")[0];
-            }
-        }
-
-        esLider = nombreLider.equals(getName());
-    }
-
-    private void iniciarYRealizarHandshake() {
+    private void setupRobot() {
+        setColors(Color.ORANGE, Color.ORANGE, Color.GREEN);
         setAdjustGunForRobotTurn(true);
         setAdjustRadarForGunTurn(true);
         setAdjustRadarForRobotTurn(true);
-        definirEsquinasCampoBatalla();
-        realizarHandshake();
+        defineBattlefieldCorners();
     }
 
-    private void construirJerarquia() {
-        List<Map.Entry<String, Double>> entradasOrdenadas = new ArrayList<>(distanciasDesdeRobots.entrySet());
-        Collections.sort(entradasOrdenadas, Comparator.comparingDouble(Map.Entry::getValue));
+    private void defineBattlefieldCorners() {
+        double marginX = getBattleFieldWidth() * SAFETY_MARGIN;
+        double marginY = getBattleFieldHeight() * SAFETY_MARGIN;
 
-        jerarquia = new LinkedHashMap<>();
-        String robotPrevio = nombreLider;
-        for (Map.Entry<String, Double> entry : entradasOrdenadas) {
-            String nombreRobot = entry.getKey();
-            jerarquia.put(nombreRobot, robotPrevio);
-            robotPrevio = nombreRobot;
+        battlefieldCorners.clear();
+        battlefieldCorners.add(new Point2D.Double(marginX, marginY));
+        battlefieldCorners.add(new Point2D.Double(getBattleFieldWidth() - marginX, marginY));
+        battlefieldCorners.add(new Point2D.Double(getBattleFieldWidth() - marginX, getBattleFieldHeight() - marginY));
+        battlefieldCorners.add(new Point2D.Double(marginX, getBattleFieldHeight() - marginY));
+    }
+
+    private void initiateHandshake() {
+        int randomNumber = (int) (Math.random() * 1000);
+        try {
+            broadcastMessage(new LeaderProposal(getName(), randomNumber));
+        } catch (IOException e) {
+            logError("Failed to send LeaderProposal", e);
+        }
+
+        teamMembers.add(getName() + "#" + randomNumber);
+
+        long waitUntil = getTime() + 5;
+        while (getTime() < waitUntil) {
+            execute();
+        }
+
+        selectCommander();
+        establishHierarchy();
+    }
+
+    private void selectCommander() {
+        int highestNumber = -1;
+        String potentialCommander = null;
+
+        for (String member : teamMembers) {
+            int number = extractRandomNumber(member);
+            if (number > highestNumber) {
+                highestNumber = number;
+                potentialCommander = member.split("#")[0];
+            }
+        }
+
+        if (potentialCommander != null) {
+            currentCommander = potentialCommander;
+            isCommander = currentCommander.equals(getName());
         }
     }
 
-    private int obtenerNumeroAleatorioDeNombre(String nombre) {
-        String[] partes = nombre.split("#");
-        return partes.length > 1 ? Integer.parseInt(partes[1]) : 0;
+    private int extractRandomNumber(String member) {
+        String[] parts = member.split("#");
+        try {
+            return parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+        } catch (NumberFormatException e) {
+            logError("Invalid number format in team member: " + member, e);
+            return 0;
+        }
     }
 
-    private void establecerJerarquia() {
-        if (esLider) {
-            try {
-                broadcastMessage(new AnuncioLider(getName(), getX(), getY()));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+    private void establishHierarchy() {
+        if (isCommander) {
+            announceCommander();
 
-            distanciasDesdeRobots = new TreeMap<>();
-            mensajesEsperadosDistancia = miembrosEquipo.size() - 1;
+            distancesFromCommander.clear();
+            expectedDistanceMessages = teamMembers.size() - 1;
 
-            while (distanciasDesdeRobots.size() < mensajesEsperadosDistancia) {
+            long waitTime = getTime() + 40;
+            while (distancesFromCommander.size() < expectedDistanceMessages && getTime() < waitTime) {
                 execute();
             }
 
-            construirJerarquia();
-
-            try {
-                broadcastMessage(new ActualizacionJerarquia(jerarquia));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
+            buildHierarchy();
+            broadcastHierarchy();
         } else {
-            while (!posicionesRobots.containsKey(nombreLider)) {
-                execute();
-            }
-
-            double distanciaLider = Point2D.distance(getX(), getY(), posicionesRobots.get(nombreLider).getX(), posicionesRobots.get(nombreLider).getY());
-            try {
-                sendMessage(nombreLider, new MensajeDistancia(getName(), distanciaLider));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-            while (!jerarquia.containsKey(getName())) {
-                execute();
-            }
+            waitForCommanderLocation();
+            reportDistanceToCommander();
+            waitForHierarchy();
         }
     }
 
-    private void rotarRoles() {
-        sentidoHorario = !sentidoHorario;
-        List<String> miembros = new ArrayList<>(jerarquia.keySet());
-        miembros.add(0, nombreLider);
+    private void announceCommander() {
+        try {
+            broadcastMessage(new CommanderAnnouncement(getName(), getX(), getY()));
+        } catch (IOException e) {
+            logError("Failed to send CommanderAnnouncement", e);
+        }
+    }
 
-        String nuevoLider = null;
-        for (int i = miembros.size() - 1; i >= 0; i--) {
-            String candidato = miembros.get(i);
-            if (miembrosVivos.contains(candidato)) {
-                nuevoLider = candidato;
+    private void waitForCommanderLocation() {
+        while (!robotLocations.containsKey(currentCommander)) {
+            execute();
+        }
+    }
+
+    private void reportDistanceToCommander() {
+        Point2D.Double commanderPos = robotLocations.get(currentCommander);
+        double distance = Point2D.distance(getX(), getY(), commanderPos.getX(), commanderPos.getY());
+        try {
+            sendMessage(currentCommander, new DistanceReport(getName(), distance));
+        } catch (IOException e) {
+            logError("Failed to send DistanceReport to commander", e);
+        }
+    }
+
+    private void waitForHierarchy() {
+        while (!teamHierarchy.containsKey(getName())) {
+            execute();
+        }
+    }
+
+    private void buildHierarchy() {
+        List<Map.Entry<String, Double>> sortedEntries = new ArrayList<>(distancesFromCommander.entrySet());
+        sortedEntries.sort(Comparator.comparingDouble(Map.Entry::getValue));
+
+        teamHierarchy.clear();
+        String previous = currentCommander;
+
+        for (Map.Entry<String, Double> entry : sortedEntries) {
+            String robot = entry.getKey();
+            teamHierarchy.put(robot, previous);
+            previous = robot;
+        }
+    }
+
+    private void broadcastHierarchy() {
+        try {
+            broadcastMessage(new HierarchyUpdate(teamHierarchy));
+        } catch (IOException e) {
+            logError("Failed to send HierarchyUpdate", e);
+        }
+    }
+
+    private void switchRoles() {
+        clockwise = !clockwise;
+        List<String> membersList = new ArrayList<>(teamHierarchy.keySet());
+        membersList.add(0, currentCommander);
+
+        String newCommander = null;
+        for (int i = membersList.size() - 1; i >= 0; i--) {
+            String candidate = membersList.get(i);
+            if (activeMembers.contains(candidate)) {
+                newCommander = candidate;
                 break;
             }
         }
 
-        if (nuevoLider != null) {
-            nombreLider = nuevoLider;
-            esLider = nombreLider.equals(getName());
+        if (newCommander != null) {
+            currentCommander = newCommander;
+            isCommander = currentCommander.equals(getName());
+            rebuildHierarchy(membersList);
+            announceNewCommander();
+        }
+    }
 
-            jerarquia.clear();
-            String robotPrevio = nombreLider;
-            for (String miembro : miembros) {
-                if (miembrosVivos.contains(miembro)) {
-                    jerarquia.put(miembro, robotPrevio);
-                    robotPrevio = miembro;
+    private void rebuildHierarchy(List<String> members) {
+        teamHierarchy.clear();
+        String previous = currentCommander;
+
+        for (String member : members) {
+            if (activeMembers.contains(member)) {
+                teamHierarchy.put(member, previous);
+                previous = member;
+            }
+        }
+    }
+
+    private void announceNewCommander() {
+        try {
+            broadcastMessage(new CommanderAnnouncement(currentCommander, getX(), getY()));
+            broadcastMessage(new HierarchyUpdate(teamHierarchy));
+        } catch (IOException e) {
+            logError("Failed to send new CommanderAnnouncement and HierarchyUpdate", e);
+        }
+    }
+
+    private void navigateCommander() {
+        if (!isMoving) {
+            targetCornerIndex = findNearestCorner();
+            destination = battlefieldCorners.get(targetCornerIndex);
+            isMoving = true;
+        }
+
+        if (getDistance(destination) < DISTANCE_TOLERANCE) {
+            targetCornerIndex = (clockwise) ? (targetCornerIndex + 1) % battlefieldCorners.size()
+                                           : (targetCornerIndex - 1 + battlefieldCorners.size()) % battlefieldCorners.size();
+            destination = battlefieldCorners.get(targetCornerIndex);
+        }
+
+        moveTo(destination.getX(), destination.getY());
+    }
+
+    private int findNearestCorner() {
+        double minDistance = Double.MAX_VALUE;
+        int closestIndex = 0;
+        for (int i = 0; i < battlefieldCorners.size(); i++) {
+            double distance = getDistance(battlefieldCorners.get(i));
+            if (distance < minDistance) {
+                minDistance = distance;
+                closestIndex = i;
+            }
+        }
+        return closestIndex;
+    }
+
+    private double getDistance(Point2D.Double point) {
+        return Point2D.distance(getX(), getY(), point.getX(), point.getY());
+    }
+
+    private void moveTo(double x, double y) {
+        double deltaX = x - getX();
+        double deltaY = y - getY();
+        double targetAngle = Math.toDegrees(Math.atan2(deltaX, deltaY));
+        double turnAngle = Utils.normalRelativeAngleDegrees(targetAngle - getHeading());
+        setTurnRight(turnAngle);
+        setAhead(Math.hypot(deltaX, deltaY));
+    }
+
+    private void followPredecessor() {
+        String predecessor = getAlivePredecessor(getName());
+        if (predecessor != null) {
+            Point2D.Double predecessorPos = robotLocations.get(predecessor);
+            if (predecessorPos != null) {
+                double distance = getDistance(predecessorPos);
+                if (distance > FOLLOW_DISTANCE) {
+                    moveTo(predecessorPos.getX(), predecessorPos.getY());
+                } else if (distance < RETRAER_DISTANCIA) { // Corrected here
+                    back(RETRAER_DISTANCIA); // Corrected here
                 }
             }
-
-            try {
-                broadcastMessage(new AnuncioLider(nombreLider, getX(), getY()));
-                broadcastMessage(new ActualizacionJerarquia(jerarquia));
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
         }
     }
 
-    private void moverLider() {
-    if (indiceEsquinaActual == -1) {
-        // Si es la primera vez, busca la esquina más cercana
-        indiceEsquinaActual = obtenerIndiceEsquinaMasCercana();
-    }
-
-    // Define la esquina objetivo a la que se dirige
-    Point2D.Double esquinaObjetivo = esquinas.get(indiceEsquinaActual);
-    
-    // Mueve el robot hacia esa esquina
-    irA(esquinaObjetivo.getX(), esquinaObjetivo.getY());
-
-    // Si ya llegó a la esquina (distancia menor a un umbral)
-    if (obtenerDistanciaA(esquinaObjetivo) < 20) {
-        // Actualiza el índice de la siguiente esquina en sentido horario
-        // Avanza a la siguiente esquina en sentido horario
-        indiceEsquinaActual = (indiceEsquinaActual + 1) % esquinas.size();
-    }
-}
-
-
-    private void seguirPredecesor() {
-        String predecesor = obtenerPredecesorVivo(getName());
-        if (predecesor != null) {
-            Point2D.Double posicionPredecesor = posicionesRobots.get(predecesor);
-            if (posicionPredecesor != null) {
-                double distancia = obtenerDistanciaA(posicionPredecesor);
-                if (distancia > 100) {
-                    irA(posicionPredecesor.getX(), posicionPredecesor.getY());
-                } else if (distancia < 50) {
-                    back(50);
-                }
-            }
+    private String getAlivePredecessor(String robot) {
+        String predecessor = teamHierarchy.get(robot);
+        while (predecessor != null && !activeMembers.contains(predecessor)) {
+            predecessor = teamHierarchy.get(predecessor);
         }
+        return (predecessor == null && !robot.equals(currentCommander)) ? currentCommander : predecessor;
     }
 
-    private int obtenerIndiceEsquinaMasCercana() {
-        double distanciaMinima = Double.MAX_VALUE;
-        int indice = 0;
-        for (int i = 0; i < esquinas.size(); i++) {
-            double distancia = obtenerDistanciaA(esquinas.get(i));
-            if (distancia < distanciaMinima) {
-                distanciaMinima = distancia;
-                indice = i;
-            }
-        }
-        return indice;
-    }
-
-    private double obtenerDistanciaA(Point2D.Double punto) {
-        return Point2D.distance(getX(), getY(), punto.getX(), punto.getY());
-    }
-
-    private void irA(double x, double y) {
-        double dx = x - getX();
-        double dy = y - getY();
-        double anguloObjetivo = Math.toDegrees(Math.atan2(dx, dy));
-        double anguloParaGirar = Utils.normalRelativeAngleDegrees(anguloObjetivo - getHeading());
-        setTurnRight(anguloParaGirar);
-        setAhead(Math.hypot(dx, dy));
-    }
-
-    private String obtenerPredecesorVivo(String nombreRobot) {
-        String predecesor = jerarquia.get(nombreRobot);
-        while (predecesor != null && !miembrosVivos.contains(predecesor)) {
-            predecesor = jerarquia.get(predecesor);
-        }
-        return predecesor == null && !nombreRobot.equals(nombreLider) ? nombreLider : predecesor;
-    }
-
-    private void controlarRadar() {
-        if (enemigoObjetivo != null) {
-            double anguloAbsoluto = Math.toDegrees(Math.atan2(enemigoObjetivo.getX() - getX(), enemigoObjetivo.getY() - getY()));
-            double giroRadar = Utils.normalRelativeAngleDegrees(anguloAbsoluto - getRadarHeading());
-            setTurnRadarRight(giroRadar * 2);
+    private void manageRadar() {
+        if (primaryTarget != null) {
+            double absoluteBearing = Math.toDegrees(Math.atan2(primaryTarget.getX() - getX(), primaryTarget.getY() - getY()));
+            double radarTurn = Utils.normalRelativeAngleDegrees(absoluteBearing - getRadarHeading());
+            setTurnRadarRight(radarTurn * 2);
         } else {
             setTurnRadarRight(360);
         }
     }
 
-    private void seleccionarEnemigoObjetivo() {
-        if (enemigos.isEmpty()) {
-            enemigoObjetivo = null;
+    private void choosePrimaryTarget() {
+        if (detectedEnemies.isEmpty()) {
+            primaryTarget = null;
             return;
         }
 
-        enemigoObjetivo = enemigos.values().stream().min(Comparator.comparingDouble(EnemyInfo::getDistance)).orElse(null);
-        tiempoUltimaVezVistoEnemigo = getTime();
+        primaryTarget = detectedEnemies.values().stream()
+                .min(Comparator.comparingDouble(EnemyData::getDistance))
+                .orElse(null);
+
+        if (primaryTarget != null) {
+            lastEnemySeenTime = getTime();
+        }
     }
 
-    private void transmitirEnemigoObjetivo() {
-        if (enemigoObjetivo != null) {
+    private void broadcastPrimaryTarget() {
+        if (primaryTarget != null) {
             try {
-                broadcastMessage(new MensajeEnemigoObjetivo(enemigoObjetivo));
+                broadcastMessage(new EnemyTarget(primaryTarget));
             } catch (IOException e) {
-                e.printStackTrace();
+                logError("Failed to send EnemyTarget", e);
             }
         }
     }
 
-    private void rastrearYDisparar() {
-        double poderBala = obtenerPoderDisparoOptimo(enemigoObjetivo.getDistance());
-        double velocidadBala = Rules.getBulletSpeed(poderBala);
-        double tiempoImpacto = enemigoObjetivo.getDistance() / velocidadBala;
+    private void trackAndFire() {
+        if (primaryTarget == null) return;
 
-        double futuroX = enemigoObjetivo.getX() + Math.sin(Math.toRadians(enemigoObjetivo.getHeading())) * enemigoObjetivo.getVelocity() * tiempoImpacto;
-        double futuroY = enemigoObjetivo.getY() + Math.cos(Math.toRadians(enemigoObjetivo.getHeading())) * enemigoObjetivo.getVelocity() * tiempoImpacto;
+        double firePower = determineFirePower(primaryTarget.getDistance());
+        double bulletSpeed = Rules.getBulletSpeed(firePower);
+        double timeToHit = primaryTarget.getDistance() / bulletSpeed;
 
-        futuroX = Math.max(Math.min(futuroX, getBattleFieldWidth() - 18), 18);
-        futuroY = Math.max(Math.min(futuroY, getBattleFieldHeight() - 18), 18);
+        double futureX = primaryTarget.getX() + Math.sin(Math.toRadians(primaryTarget.getDirection())) * primaryTarget.getSpeed() * timeToHit;
+        double futureY = primaryTarget.getY() + Math.cos(Math.toRadians(primaryTarget.getDirection())) * primaryTarget.getSpeed() * timeToHit;
 
-        double anguloEnemigo = Math.toDegrees(Math.atan2(futuroX - getX(), futuroY - getY()));
-        double giroCañon = Utils.normalRelativeAngleDegrees(anguloEnemigo - getGunHeading());
+        futureX = clamp(futureX, 18, getBattleFieldWidth() - 18);
+        futureY = clamp(futureY, 18, getBattleFieldHeight() - 18);
 
-        setTurnGunRight(giroCañon);
+        double targetAngle = Math.toDegrees(Math.atan2(futureX - getX(), futureY - getY()));
+        double gunTurn = Utils.normalRelativeAngleDegrees(targetAngle - getGunHeading());
 
-        if (Math.abs(giroCañon) < 10) {
-            setFire(poderBala);
+        setTurnGunRight(gunTurn);
+
+        if (Math.abs(gunTurn) < 10) {
+            setFire(firePower);
         }
     }
 
-    private double obtenerPoderDisparoOptimo(double distancia) {
-        return distancia < 200 ? 3.0 : (distancia < 400 ? 2.5 : 1.0);
+    private double determineFirePower(double distance) {
+        if (distance < 200) return MAX_FIRE_POWER;
+        if (distance < 400) return 2.5;
+        return MIN_FIRE_POWER;
     }
 
-    public void onScannedRobot(ScannedRobotEvent e) {
-        if (isTeammate(e.getName())) return;
+    private double clamp(double value, double min, double max) {
+        return Math.max(Math.min(value, max), min);
+    }
 
-        double anguloAbsoluto = Math.toRadians(getHeading() + e.getBearing());
-        double enemigoX = getX() + Math.sin(anguloAbsoluto) * e.getDistance();
-        double enemigoY = getY() + Math.cos(anguloAbsoluto) * e.getDistance();
+    private void broadcastLocation() {
+        try {
+            broadcastMessage(new PositionUpdate(getName(), getX(), getY()));
+        } catch (IOException e) {
+            logError("Failed to send PositionUpdate", e);
+        }
+    }
 
-        EnemyInfo enemigoInfo = new EnemyInfo(e.getName(), e.getBearing(), e.getDistance(), e.getHeading(), e.getVelocity(), enemigoX, enemigoY, getTime());
+    private void logError(String message, Exception e) {
+        System.err.println(message);
+        e.printStackTrace();
+    }
 
-        enemigos.put(e.getName(), enemigoInfo);
+    @Override
+    public void onScannedRobot(ScannedRobotEvent event) {
+        if (isTeamMember(event.getName())) return;
+
+        double absoluteBearing = Math.toRadians(getHeading() + event.getBearing());
+        double enemyX = getX() + Math.sin(absoluteBearing) * event.getDistance();
+        double enemyY = getY() + Math.cos(absoluteBearing) * event.getDistance();
+
+        EnemyData enemyInfo = new EnemyData(
+                event.getName(),
+                event.getBearing(),
+                event.getDistance(),
+                event.getHeading(),
+                event.getVelocity(),
+                enemyX,
+                enemyY,
+                getTime(),
+                event.getEnergy()
+        );
+
+        detectedEnemies.put(event.getName(), enemyInfo);
 
         try {
-            sendMessage(nombreLider, enemigoInfo);
-        } catch (IOException ex) {
-            ex.printStackTrace();
+            sendMessage(currentCommander, enemyInfo);
+        } catch (IOException e) {
+            logError("Failed to send EnemyData to commander", e);
         }
 
-        if (!esLider && enemigoObjetivo == null) return;
+        if (!isCommander && primaryTarget == null) return;
 
-        if (enemigoObjetivo != null && e.getName().equals(enemigoObjetivo.getEnemyName())) {
-            enemigoObjetivo = enemigoInfo;
-            tiempoUltimaVezVistoEnemigo = getTime();
+        if (primaryTarget != null && event.getName().equals(primaryTarget.getEnemyName())) {
+            primaryTarget = enemyInfo;
+            lastEnemySeenTime = getTime();
         }
     }
 
-    public void onHitRobot(HitRobotEvent e) {
-        if (!isTeammate(e.getName())) {
+    private boolean isTeamMember(String robotName) {
+        for (String member : teamMembers) {
+            if (member.startsWith(robotName + "#")) return true;
+        }
+        return false;
+    }
+
+    @Override
+    public void onHitRobot(HitRobotEvent event) {
+        if (!isTeamMember(event.getName())) {
             setFire(2);
-            back(50);
+            back(RETRAER_DISTANCIA); // Corrected here
         } else {
             back(20);
         }
     }
 
+    @Override
     public void onRobotDeath(RobotDeathEvent event) {
-        String robotMuerto = event.getName();
-        if (isTeammate(robotMuerto)) {
-            miembrosVivos.remove(robotMuerto);
+        String deadRobot = event.getName();
+        if (isTeamMember(deadRobot)) {
+            activeMembers.remove(deadRobot);
 
-            if (robotMuerto.equals(nombreLider)) {
-                if (miembrosVivos.contains(getName()) && jerarquia.get(getName()) == null) {
-                    esLider = true;
-                    nombreLider = getName();
-                    jerarquia.remove(getName());
-
-                    try {
-                        broadcastMessage(new AnuncioLider(nombreLider, getX(), getY()));
-                        broadcastMessage(new ActualizacionJerarquia(jerarquia));
-                    } catch (IOException e) {
-                        e.printStackTrace();
-                    }
-
-                } else {
-                    nombreLider = obtenerPredecesorVivo(robotMuerto);
-                }
+            if (deadRobot.equals(currentCommander)) {
+                handleCommanderDeath(deadRobot);
             }
 
-            if (jerarquia.containsKey(robotMuerto)) {
-                jerarquia.remove(robotMuerto);
+            teamHierarchy.remove(deadRobot);
+            updateHierarchyAfterDeath(deadRobot);
+        } else {
+            detectedEnemies.remove(deadRobot);
+            if (primaryTarget != null && primaryTarget.getEnemyName().equals(deadRobot)) {
+                primaryTarget = null;
             }
+        }
+    }
 
-            for (Map.Entry<String, String> entry : jerarquia.entrySet()) {
-                String nombreRobot = entry.getKey();
-                String predecesor = entry.getValue();
+    private void handleCommanderDeath(String deadCommander) {
+        if (activeMembers.contains(getName()) && teamHierarchy.get(getName()) == null) {
+            isCommander = true;
+            currentCommander = getName();
+            teamHierarchy.remove(getName());
 
-                if (predecesor.equals(robotMuerto)) {
-                    String nuevoPredecesor = obtenerPredecesorVivo(nombreRobot);
-                    jerarquia.put(nombreRobot, nuevoPredecesor);
-                }
+            try {
+                broadcastMessage(new CommanderAnnouncement(currentCommander, getX(), getY()));
+                broadcastMessage(new HierarchyUpdate(teamHierarchy));
+            } catch (IOException e) {
+                logError("Failed to announce new commander after commander death", e);
             }
         } else {
-            enemigos.remove(robotMuerto);
-            if (enemigoObjetivo != null && enemigoObjetivo.getEnemyName().equals(robotMuerto)) {
-                enemigoObjetivo = null;
+            currentCommander = getAlivePredecessor(deadCommander);
+        }
+    }
+
+    private void updateHierarchyAfterDeath(String deadRobot) {
+        for (Map.Entry<String, String> entry : teamHierarchy.entrySet()) {
+            String robot = entry.getKey();
+            String predecessor = entry.getValue();
+
+            if (predecessor.equals(deadRobot)) {
+                String newPredecessor = getAlivePredecessor(predecessor);
+                teamHierarchy.put(robot, newPredecessor);
             }
         }
     }
 
+    @Override
     public void onPaint(Graphics2D g) {
-    if (esLider) {
-        g.setColor(java.awt.Color.YELLOW);  // Asegúrate de usar colores válidos
-        int radio = 50;
-        int diametro = radio * 2;
-        int x = (int) (getX() - radio);
-        int y = (int) (getY() - radio);
-        g.drawOval(x, y, diametro, diametro);
-    }
-}
-
-    public void onMessageReceived(MessageEvent e) {
-        Object mensaje = e.getMessage();
-        if (mensaje instanceof PropuestaLider) {
-            PropuestaLider propuesta = (PropuestaLider) mensaje;
-            String nombreMiembro = propuesta.getRobotName() + "#" + propuesta.getRandomNumber();
-            if (!miembrosEquipo.contains(nombreMiembro)) {
-                miembrosEquipo.add(nombreMiembro);
-                miembrosVivos.add(propuesta.getRobotName());
-            }
-        } else if (mensaje instanceof AnuncioLider) {
-            AnuncioLider mensajeLider = (AnuncioLider) mensaje;
-            nombreLider = mensajeLider.getRobotName();
-            esLider = nombreLider.equals(getName());
-            posicionesRobots.put(nombreLider, new Point2D.Double(mensajeLider.getX(), mensajeLider.getY()));
-        } else if (mensaje instanceof ActualizacionPosicion) {
-            ActualizacionPosicion actualizacionPosicion = (ActualizacionPosicion) mensaje;
-            posicionesRobots.put(actualizacionPosicion.getRobotName(), new Point2D.Double(actualizacionPosicion.getX(), actualizacionPosicion.getY()));
-        } else if (mensaje instanceof EnemyInfo) {
-            EnemyInfo enemigoInfo = (EnemyInfo) mensaje;
-            enemigos.put(enemigoInfo.getEnemyName(), enemigoInfo);
-        } else if (mensaje instanceof MensajeEnemigoObjetivo) {
-            MensajeEnemigoObjetivo tem = (MensajeEnemigoObjetivo) mensaje;
-            enemigoObjetivo = tem.getEnemyInfo();
-            tiempoUltimaVezVistoEnemigo = getTime();
-        } else if (mensaje instanceof MensajeDistancia && esLider) {
-            MensajeDistancia md = (MensajeDistancia) mensaje;
-            distanciasDesdeRobots.put(md.getRobotName(), md.getDistance());
-        } else if (mensaje instanceof ActualizacionJerarquia) {
-            ActualizacionJerarquia aj = (ActualizacionJerarquia) mensaje;
-            jerarquia = aj.getHierarchy();
+        if (isCommander) {
+            g.setColor(Color.YELLOW);
+            int radius = 50;
+            int diameter = radius * 2;
+            int x = (int) (getX() - radius);
+            int y = (int) (getY() - radius);
+            g.drawOval(x, y, diameter, diameter);
         }
     }
 
-    // Clases internas
-    static class PropuestaLider implements java.io.Serializable {
-        private String nombreRobot;
-        private int numeroAleatorio;
+    @Override
+    public void onMessageReceived(MessageEvent event) {
+        Object msg = event.getMessage();
 
-        public PropuestaLider(String nombreRobot, int numeroAleatorio) {
-            this.nombreRobot = nombreRobot;
-            this.numeroAleatorio = numeroAleatorio;
+        try {
+            if (msg instanceof LeaderProposal) {
+                handleLeaderProposal((LeaderProposal) msg);
+            } else if (msg instanceof CommanderAnnouncement) {
+                handleCommanderAnnouncement((CommanderAnnouncement) msg);
+            } else if (msg instanceof PositionUpdate) {
+                handlePositionUpdate((PositionUpdate) msg);
+            } else if (msg instanceof EnemyData) {
+                handleEnemyData((EnemyData) msg);
+            } else if (msg instanceof EnemyTarget) {
+                handleEnemyTarget((EnemyTarget) msg);
+            } else if (msg instanceof DistanceReport && isCommander) {
+                handleDistanceReport((DistanceReport) msg);
+            } else if (msg instanceof HierarchyUpdate) {
+                handleHierarchyUpdate((HierarchyUpdate) msg);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void handleLeaderProposal(LeaderProposal proposal) {
+        String name = proposal.getRobotName() + "#" + proposal.getRandomNumber();
+        if (!teamMembers.contains(name)) {
+            teamMembers.add(name);
+            activeMembers.add(proposal.getRobotName());
+        }
+    }
+
+    private void handleCommanderAnnouncement(CommanderAnnouncement announcement) {
+        currentCommander = announcement.getCommanderName();
+        isCommander = currentCommander.equals(getName());
+        robotLocations.put(currentCommander, new Point2D.Double(announcement.getX(), announcement.getY()));
+    }
+
+    private void handlePositionUpdate(PositionUpdate update) {
+        robotLocations.put(update.getRobotName(), new Point2D.Double(update.getX(), update.getY()));
+    }
+
+    private void handleEnemyData(EnemyData enemy) {
+        detectedEnemies.put(enemy.getEnemyName(), enemy);
+    }
+
+    private void handleEnemyTarget(EnemyTarget targetMsg) {
+        primaryTarget = targetMsg.getEnemyInfo();
+        lastEnemySeenTime = getTime();
+    }
+
+    private void handleDistanceReport(DistanceReport report) {
+        distancesFromCommander.put(report.getRobotName(), report.getDistance());
+    }
+
+    private void handleHierarchyUpdate(HierarchyUpdate update) {
+        teamHierarchy.clear();
+        teamHierarchy.putAll(update.getHierarchy());
+    }
+
+    // Classes Internes per Missatges
+    static class LeaderProposal implements java.io.Serializable {
+        private final String robotName;
+        private final int randomNumber;
+
+        public LeaderProposal(String robotName, int randomNumber) {
+            this.robotName = robotName;
+            this.randomNumber = randomNumber;
         }
 
         public String getRobotName() {
-            return nombreRobot;
+            return robotName;
         }
 
         public int getRandomNumber() {
-            return numeroAleatorio;
+            return randomNumber;
         }
     }
 
-    static class AnuncioLider implements java.io.Serializable {
-        private String nombreRobot;
-        private double x, y;
+    static class CommanderAnnouncement implements java.io.Serializable {
+        private final String commanderName;
+        private final double x, y;
 
-        public AnuncioLider(String nombreRobot, double x, double y) {
-            this.nombreRobot = nombreRobot;
+        public CommanderAnnouncement(String commanderName, double x, double y) {
+            this.commanderName = commanderName;
             this.x = x;
             this.y = y;
         }
 
-        public String getRobotName() {
-            return nombreRobot;
+        public String getCommanderName() {
+            return commanderName;
         }
 
         public double getX() {
@@ -516,18 +633,18 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
-    static class ActualizacionPosicion implements java.io.Serializable {
-        private String nombreRobot;
-        private double x, y;
+    static class PositionUpdate implements java.io.Serializable {
+        private final String robotName;
+        private final double x, y;
 
-        public ActualizacionPosicion(String nombreRobot, double x, double y) {
-            this.nombreRobot = nombreRobot;
+        public PositionUpdate(String robotName, double x, double y) {
+            this.robotName = robotName;
             this.x = x;
             this.y = y;
         }
 
         public String getRobotName() {
-            return nombreRobot;
+            return robotName;
         }
 
         public double getX() {
@@ -539,46 +656,48 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
     }
 
-    static class MensajeDistancia implements java.io.Serializable {
-        private String nombreRobot;
-        private double distancia;
+    static class DistanceReport implements java.io.Serializable {
+        private final String robotName;
+        private final double distance;
 
-        public MensajeDistancia(String nombreRobot, double distancia) {
-            this.nombreRobot = nombreRobot;
-            this.distancia = distancia;
+        public DistanceReport(String robotName, double distance) {
+            this.robotName = robotName;
+            this.distance = distance;
         }
 
         public String getRobotName() {
-            return nombreRobot;
+            return robotName;
         }
 
         public double getDistance() {
-            return distancia;
+            return distance;
         }
     }
 
-    static class EnemyInfo implements java.io.Serializable {
-        private String nombreEnemigo;
-        private double bearing;
-        private double distancia;
-        private double heading;
-        private double velocidad;
-        private double x, y;
-        private long tiempo;
+    static class EnemyData implements java.io.Serializable {
+        private final String enemyName;
+        private final double bearing;
+        private final double distance;
+        private final double direction;
+        private final double speed;
+        private final double x, y;
+        private final long time;
+        private final double energy;
 
-        public EnemyInfo(String nombreEnemigo, double bearing, double distancia, double heading, double velocidad, double x, double y, long tiempo) {
-            this.nombreEnemigo = nombreEnemigo;
+        public EnemyData(String enemyName, double bearing, double distance, double direction, double speed, double x, double y, long time, double energy) {
+            this.enemyName = enemyName;
             this.bearing = bearing;
-            this.distancia = distancia;
-            this.heading = heading;
-            this.velocidad = velocidad;
+            this.distance = distance;
+            this.direction = direction;
+            this.speed = speed;
             this.x = x;
             this.y = y;
-            this.tiempo = tiempo;
+            this.time = time;
+            this.energy = energy;
         }
 
         public String getEnemyName() {
-            return nombreEnemigo;
+            return enemyName;
         }
 
         public double getBearing() {
@@ -586,15 +705,15 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
 
         public double getDistance() {
-            return distancia;
+            return distance;
         }
 
-        public double getHeading() {
-            return heading;
+        public double getDirection() {
+            return direction;
         }
 
-        public double getVelocity() {
-            return velocidad;
+        public double getSpeed() {
+            return speed;
         }
 
         public double getX() {
@@ -606,31 +725,35 @@ public class FollowTheLeaderRobot extends TeamRobot {
         }
 
         public long getTime() {
-            return tiempo;
+            return time;
+        }
+
+        public double getEnergy() {
+            return energy;
         }
     }
 
-    static class MensajeEnemigoObjetivo implements java.io.Serializable {
-        private EnemyInfo enemigoInfo;
+    static class EnemyTarget implements java.io.Serializable {
+        private final EnemyData enemyInfo;
 
-        public MensajeEnemigoObjetivo(EnemyInfo enemigoInfo) {
-            this.enemigoInfo = enemigoInfo;
+        public EnemyTarget(EnemyData enemyInfo) {
+            this.enemyInfo = enemyInfo;
         }
 
-        public EnemyInfo getEnemyInfo() {
-            return enemigoInfo;
+        public EnemyData getEnemyInfo() {
+            return enemyInfo;
         }
     }
 
-    static class ActualizacionJerarquia implements java.io.Serializable {
-        private Map<String, String> jerarquia;
+    static class HierarchyUpdate implements java.io.Serializable {
+        private final Map<String, String> hierarchy;
 
-        public ActualizacionJerarquia(Map<String, String> jerarquia) {
-            this.jerarquia = jerarquia;
+        public HierarchyUpdate(Map<String, String> hierarchy) {
+            this.hierarchy = hierarchy;
         }
 
         public Map<String, String> getHierarchy() {
-            return jerarquia;
+            return hierarchy;
         }
     }
 }
