@@ -1,16 +1,30 @@
 package pkg1;
+
 import robocode.*;
 import java.awt.geom.Point2D;
 import robocode.util.Utils;
 
+/**
+ * Interfaz que define el estado del robot en Robocode.
+ */
 interface State {
+    /**
+     * Método que ejecuta las acciones correspondientes al estado actual.
+     */
     void execute();
 }
 
-// Estado de la Fase 0 (búsqueda de enemigo y cálculo de esquina más lejana)
+/**
+ * Estado de la Fase 0: búsqueda de enemigo y cálculo de la esquina más lejana.
+ */
 class Phase0State implements State {
     private final TimidinRobot robot;
 
+    /**
+     * Constructor de la clase Phase0State.
+     * 
+     * @param robot Instancia del robot.
+     */
     public Phase0State(TimidinRobot robot) {
         this.robot = robot;
     }
@@ -20,6 +34,11 @@ class Phase0State implements State {
         robot.setTurnRadarRight(Double.POSITIVE_INFINITY);  // Girar radar infinitamente
     }
 
+    /**
+     * Método llamado cuando se detecta un enemigo.
+     * 
+     * @param e Evento de detección de un robot enemigo.
+     */
     public void onScannedRobot(ScannedRobotEvent e) {
         double enemyX = robot.getX() + Math.sin(Math.toRadians(e.getBearing() + robot.getHeading())) * e.getDistance();
         double enemyY = robot.getY() + Math.cos(Math.toRadians(e.getBearing() + robot.getHeading())) * e.getDistance();
@@ -30,6 +49,12 @@ class Phase0State implements State {
         robot.changeState(robot.getPhase1State());  // Cambia a la Fase 1
     }
 
+    /**
+     * Calcula la esquina más lejana con respecto a la posición del enemigo.
+     * 
+     * @param enemyPosition Posición del enemigo.
+     * @return La esquina más lejana del campo de batalla.
+     */
     private Point2D.Double calculateFarthestCorner(Point2D.Double enemyPosition) {
         double battlefieldWidth = robot.getBattleFieldWidth();
         double battlefieldHeight = robot.getBattleFieldHeight();
@@ -55,13 +80,19 @@ class Phase0State implements State {
     }
 }
 
-// Estado de la Fase 1 (movimiento hacia la esquina, esquivando obstáculos y disparo)
+/**
+ * Estado de la Fase 1: movimiento hacia la esquina calculada, esquivando obstáculos y disparando si es necesario.
+ */
 class Phase1State implements State {
-
     private final TimidinRobot robot;
     private boolean obstaculo = false;
     private int stopCounter = 0;
 
+    /**
+     * Constructor de la clase Phase1State.
+     * 
+     * @param robot Instancia del robot.
+     */
     public Phase1State(TimidinRobot robot) {
         this.robot = robot;
     }
@@ -108,14 +139,15 @@ class Phase1State implements State {
         }
     }
 
+    /**
+     * Método que ejecuta la acción de esquivar obstáculos.
+     */
     public void esquivarObs() {
-        // Obtener las coordenadas actuales del robot
         double x = robot.getX();
         double y = robot.getY();
         double battlefieldWidth = robot.getBattleFieldWidth();
         double battlefieldHeight = robot.getBattleFieldHeight();
 
-        // Calcular la distancia a cada pared
         double distanciaNorte = battlefieldHeight - y;
         double distanciaSur = y;
         double distanciaEste = battlefieldWidth - x;
@@ -123,18 +155,21 @@ class Phase1State implements State {
 
         // Determinar hacia qué lado girar
         if (distanciaNorte > distanciaSur && distanciaEste > distanciaOeste) {
-            // Más lejos del norte y del este => girar a la izquierda
             robot.turnLeft(45);
         } else {
-            // Más cerca del sur o del oeste => girar a la derecha
             robot.turnRight(45);
         }
 
-        robot.ahead(75);  // Avanzar tras el giro
+        robot.ahead(75);
         robot.execute();
         obstaculo = false;
     }
 
+    /**
+     * Método llamado cuando se detecta un robot enemigo cercano.
+     * 
+     * @param e Evento de detección de un robot enemigo.
+     */
     public void onScannedRobot(ScannedRobotEvent e) {
         if (e.getDistance() <= 200) {
             robot.setFire(2);
@@ -142,16 +177,27 @@ class Phase1State implements State {
         }
     }
 
+    /**
+     * Método llamado cuando el robot choca con otro robot.
+     * 
+     * @param e Evento de colisión con un robot enemigo.
+     */
     public void onHitRobot(HitRobotEvent e) {
         obstaculo = true;
     }
 }
 
-
-// Estado de la Fase 2 (detección de enemigos, disparo y reinicio de búsqueda)
+/**
+ * Estado de la Fase 2: detección de enemigos, disparo y reinicio de búsqueda.
+ */
 class Phase2State implements State {
     private final TimidinRobot robot;
 
+    /**
+     * Constructor de la clase Phase2State.
+     * 
+     * @param robot Instancia del robot.
+     */
     public Phase2State(TimidinRobot robot) {
         this.robot = robot;
     }
@@ -161,24 +207,26 @@ class Phase2State implements State {
         robot.setTurnRadarRight(Double.POSITIVE_INFINITY);  // Girar el radar buscando enemigos
     }
 
+    /**
+     * Método llamado cuando se detecta un enemigo.
+     * 
+     * @param e Evento de detección de un robot enemigo.
+     */
     public void onScannedRobot(ScannedRobotEvent e) {
-        // Girar el radar hacia el enemigo
         double radarTurn = robot.getHeading() - robot.getRadarHeading() + e.getBearing();
         robot.setTurnRadarRight(Utils.normalRelativeAngleDegrees(radarTurn));
 
-        // Alinear el cañón con el radar
         double gunTurn = robot.getHeading() - robot.getGunHeading() + e.getBearing();
         robot.setTurnGunRight(Utils.normalRelativeAngleDegrees(gunTurn));
 
-        // Disparar con potencia proporcional a la distancia
         robot.smartFire(e.getDistance());
-
-        // Escanear para encontrar otro enemigo
         robot.scan();
     }
 }
 
-// Clase principal del robot
+/**
+ * Clase principal del robot TimidinRobot que implementa una máquina de estados con tres fases.
+ */
 public class TimidinRobot extends AdvancedRobot {
     private State currentState;
     private final State phase0State = new Phase0State(this);
@@ -186,6 +234,7 @@ public class TimidinRobot extends AdvancedRobot {
     private final State phase2State = new Phase2State(this);
     private Point2D.Double targetCorner;
 
+    @Override
     public void run() {
         currentState = phase0State;
         while (true) {
@@ -194,6 +243,11 @@ public class TimidinRobot extends AdvancedRobot {
         }
     }
 
+    /**
+     * Cambia el estado actual del robot.
+     * 
+     * @param newState Nuevo estado al que cambiará el robot.
+     */
     public void changeState(State newState) {
         currentState = newState;
     }
@@ -206,6 +260,11 @@ public class TimidinRobot extends AdvancedRobot {
         return phase2State;
     }
 
+    /**
+     * Método llamado cuando se detecta un robot enemigo.
+     * 
+     * @param e Evento de detección de un robot enemigo.
+     */
     public void onScannedRobot(ScannedRobotEvent e) {
         if (currentState instanceof Phase0State) {
             ((Phase0State) currentState).onScannedRobot(e);
@@ -216,21 +275,40 @@ public class TimidinRobot extends AdvancedRobot {
         }
     }
 
+    /**
+     * Método llamado cuando el robot choca con otro robot.
+     * 
+     * @param e Evento de colisión con un robot enemigo.
+     */
     public void onHitRobot(HitRobotEvent e) {
         if (currentState instanceof Phase1State) {
             ((Phase1State) currentState).onHitRobot(e);
         }
     }
 
+    /**
+     * Establece la esquina objetivo más lejana para que el robot se mueva hacia ella.
+     * 
+     * @param corner Esquina más lejana.
+     */
     public void setTargetCorner(Point2D.Double corner) {
         this.targetCorner = corner;
     }
 
+    /**
+     * Devuelve la esquina objetivo más lejana.
+     * 
+     * @return Esquina más lejana.
+     */
     public Point2D.Double getTargetCorner() {
         return targetCorner;
     }
 
-    // Método de disparo inteligente basado en la distancia
+    /**
+     * Método que ajusta la potencia de disparo en función de la distancia al enemigo.
+     * 
+     * @param distance Distancia al robot enemigo.
+     */
     public void smartFire(double distance) {
         if (distance > 400 || getEnergy() < 15) {
             setFire(1);
